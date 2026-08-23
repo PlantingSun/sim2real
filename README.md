@@ -1,0 +1,47 @@
+# sim2real_ws — Go2W Sim-to-Real 部署
+
+Unitree Go2W 机器人 sim-to-real 控制系统。不使用 ROS/ROS2，纯 Python + PyTorch。
+
+## 架构
+
+```
+driver/         关节驱动层 (DDS 实物 / MuJoCo 仿真)
+policy/         网络推理层 (纯 PyTorch, 无 ROS)
+config/         常量/映射/安全限制
+```
+
+安全逻辑嵌入 driver 的 500Hz 发布循环，不单独开线程。
+
+## 快速开始
+
+```bash
+cd /home/robot/sim2real_ws
+source setup.sh policy
+python scripts/test_policy_offline.py
+
+# MuJoCo（不需要 ROS2，也不会连接机器人）
+source setup.sh mujoco
+python scripts/test_mujoco_pipeline.py
+
+# 实机 DDS（setup 只检查依赖；运行下面脚本才会打开机器人网络）
+source setup.sh robot
+python scripts/test_dds_driver.py
+python scripts/test_policy_real.py --control keyboard
+python scripts/test_policy_real.py --control xbox --joystick /dev/input/js0
+```
+
+固定速度模式仍兼容：`python scripts/test_policy_real.py --vx 0.1`。键盘/Xbox
+可以先用 `scripts/debug_command_input.py` 离线检查。原装遥控器用
+`scripts/debug_unitree_remote.py` 只读订阅检查，暂不接入运动命令。
+
+## 依赖
+
+- Python 3.8+ (conda unitree_py38)
+- PyTorch (CPU)
+- unitree_sdk2py + CycloneDDS 0.10.x
+- MuJoCo 3.1.0+ (仅仿真)
+
+当前管线不依赖 ROS2；旧 `simtosim_ws` 的 ROS 节点应使用它自己的环境。
+
+本轮配置、环境、安全和输入重构的逐文件记录见
+[`guide/07_change_record_2026-08-19.md`](guide/07_change_record_2026-08-19.md)。
