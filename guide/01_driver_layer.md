@@ -4,8 +4,8 @@
 
 验证 `DdsDriver` 能正确：
 1. 通过 DDS 订阅机器人的 LowState（关节角度、速度、IMU）
-2. 发布 LowCmd（带安全保护）
-3. 输出与现有 `monitor_lowstate.py` 一致的数据
+2. 在不启动 LowCmd 线程的情况下输出状态
+3. 与现有 `monitor_lowstate.py` 的数据保持一致
 
 ## 前置条件
 
@@ -38,9 +38,9 @@ python scripts/test_dds_driver.py enp0s31f6
 终端每 0.5 秒打印：
 - Tick 计数和电池电量
 - IMU RPY（roll, pitch, yaw）
+- IMU quaternion、gyroscope 和 accelerometer
 - 12 个腿关节位置和速度（DDS 索引 0-11）
 - 4 个轮子位置和速度（DDS 索引 12-15）
-- 陀螺仪数据
 
 ### 4. 对比验证
 
@@ -55,10 +55,11 @@ python scripts/monitor_lowstate.py
 
 ## 通过标准
 
-- DdsDriver 初始化成功（打印 "500Hz 发布线程已启动"）
+- DdsDriver 初始化成功，并明确打印 LowCmd 发布线程尚未启动
 - 关节位置与 monitor_lowstate.py 输出一致（误差 < 0.01 rad）
-- IMU RPY 数据一致
+- IMU quaternion、RPY、gyroscope 和 accelerometer 数据正常
 - Tick 计数持续增长（说明 LowState 正常接收）
+- 测试期间没有调用 LowCmd `Write()`
 - Ctrl+C 退出后打印 "已关闭"
 
 ## 文件清单

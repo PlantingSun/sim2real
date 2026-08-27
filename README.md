@@ -28,11 +28,13 @@ source setup.sh robot
 python scripts/test_dds_driver.py
 python scripts/test_policy_real.py --control keyboard
 python scripts/test_policy_real.py --control xbox --joystick /dev/input/js0
+python scripts/test_policy_unitree_remote.py
 ```
 
 固定速度模式仍兼容：`python scripts/test_policy_real.py --vx 0.1`。键盘/Xbox
 可以先用 `scripts/debug_command_input.py` 离线检查。原装遥控器用
-`scripts/debug_unitree_remote.py` 只读订阅检查，暂不接入运动命令。
+`scripts/debug_unitree_remote.py` 只读订阅检查；确认数据后使用
+`scripts/test_policy_unitree_remote.py` 触发接管和控制 policy。
 
 ## 依赖
 
@@ -43,5 +45,5 @@ python scripts/test_policy_real.py --control xbox --joystick /dev/input/js0
 
 当前管线不依赖 ROS2；旧 `simtosim_ws` 的 ROS 节点应使用它自己的环境。
 
-本轮配置、环境、安全和输入重构的逐文件记录见
-[`guide/07_change_record_2026-08-19.md`](guide/07_change_record_2026-08-19.md)。
+当前架构、接管顺序和安全边界见
+[`guide/00_overview.md`](guide/00_overview.md)。
