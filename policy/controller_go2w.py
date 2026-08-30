@@ -53,8 +53,7 @@ class ControllerGo2w:
         # 状态缓冲
         self.last_action = torch.zeros(self.num_action, dtype=torch.float32)
         self.obs_history = deque(maxlen=self.history_length)
-        for _ in range(self.history_length):
-            self.obs_history.append(torch.zeros(self.num_actor_obs, dtype=torch.float32))
+        self.reset()
 
     def _load_model(self, path: str):
         loaded = torch.load(path, map_location=torch.device("cpu"))
@@ -65,10 +64,13 @@ class ControllerGo2w:
         print(f"[ControllerGo2w] 模型已加载: {path}")
 
     def reset(self):
-        """清空历史缓冲。"""
+        """用初始站立零运动状态填充历史缓冲。"""
         self.obs_history.clear()
+        initial_frame = torch.zeros(self.num_actor_obs, dtype=torch.float32)
+        # 53 维观测中的重力是投影重力，不是四元数；竖直站立时为 (0, 0, -1)。
+        initial_frame[3:6] = torch.tensor((0.0, 0.0, -1.0))
         for _ in range(self.history_length):
-            self.obs_history.append(torch.zeros(self.num_actor_obs, dtype=torch.float32))
+            self.obs_history.append(initial_frame.clone())
         self.last_action = torch.zeros(self.num_action, dtype=torch.float32)
 
     def build_obs(self, state: RobotState, cmd_vel: np.ndarray) -> torch.Tensor:

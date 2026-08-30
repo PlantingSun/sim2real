@@ -23,7 +23,7 @@ pip install torch --index-url https://download.pytorch.org/whl/cpu
 ```bash
 cd /home/robot/sim2real_ws
 source setup.sh policy
-python scripts/test_policy_offline.py
+python scripts/policy/test_policy_offline.py
 ```
 
 ### 3. 检查输出
@@ -32,6 +32,7 @@ python scripts/test_policy_offline.py
 - MotorCommand 腿关节 kp=50, kd=1.0
 - MotorCommand 轮子 kp=0, kd=0.5
 - build_obs 正确输出 265 维
+- `reset()` 会用初始站立零运动状态填满 5 帧历史：重力为 `(0, 0, -1)`，其余运动量和关节位置偏差为 0
 
 ## 通过标准
 
@@ -48,4 +49,4 @@ python scripts/test_policy_offline.py
 | `policy/utils.py` | 复制 | 无改动 |
 | `policy/controller_go2w.py` | 改写 | 去 ROS, 新增 build_obs/compute_action |
 | `models/go2w/model_700.pt` | 复制 | 策略权重 |
-| `scripts/test_policy_offline.py` | 新建 | 离线验证 |
+| `scripts/policy/test_policy_offline.py` | 新建 | 离线验证 |

@@ -4,8 +4,8 @@
 #
 # Usage:
 #   source setup.sh robot
-#   python scripts/test_policy_real.py --control keyboard
-#   python scripts/test_policy_real.py --control xbox --joystick /dev/input/js0
+#   python scripts/real/test_policy_real.py --control keyboard
+#   python scripts/real/test_policy_real.py --control xbox --joystick /dev/input/js0
 # ============================================================================
 
 import argparse

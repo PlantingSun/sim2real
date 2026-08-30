@@ -7,6 +7,39 @@ from policy.controller_go2w import ControllerGo2w
 from config.go2w_config import CTRL, DDS
 
 DEFAULT_SCENE = "/home/robot/test_com_ws/src/descriptions/go2w_description/mjcf/go2w_scene.xml"
+PRINT_FIRST_POLICY_FRAMES = 5
+
+
+def initialize_standing_pose(driver):
+    """在首次按空格启动前，把 MuJoCo 状态放到策略初始站姿。"""
+    if driver._joint_num != CTRL.NUM_ACTIONS:
+        raise RuntimeError(
+            f"MuJoCo actuator 数量错误: {driver._joint_num}, "
+            f"expected {CTRL.NUM_ACTIONS}"
+        )
+
+    # XML 已定义 stand keyframe；恢复完整 keyframe 可同时修正 base 高度和关节角度。
+    stand_qpos = driver._model.key("stand").qpos
+    if not np.allclose(stand_qpos[-driver._joint_num:], CTRL.INITIAL_JOINTS_POS):
+        raise RuntimeError("XML stand keyframe 与 CTRL.INITIAL_JOINTS_POS 不一致")
+    driver._data.qpos[:] = stand_qpos
+    driver._data.qvel[:] = 0.0
+    mujoco.mj_forward(driver._model, driver._data)
+    driver._viewer.sync()
+    print(f"[MujocoDriver] 初始站姿已加载: base_z={driver._data.qpos[2]:.3f} m")
+
+
+def print_motor_command(command):
+    """打印一条 DDS 顺序 MotorCommand，避免重复转换动作。"""
+    print("\nMotorCommand 数据 (DDS 顺序):")
+    print(f"{'i':>3s}  {'pos':>10s}  {'vel':>10s}  {'kp':>6s}  {'kd':>6s}")
+    for index in range(CTRL.NUM_ACTIONS):
+        print(
+            f"{index:3d}  {command.positions[index]:10.4f}  "
+            f"{command.velocities[index]:10.4f}  "
+            f"{command.kp[index]:6.1f}  {command.kd[index]:6.1f}"
+        )
+
 
 def main():
     scene = sys.argv[1] if len(sys.argv) > 1 else DEFAULT_SCENE
@@ -17,6 +50,7 @@ def main():
 
     driver = MujocoDriver(scene, data_hz=DDS.RATE_HZ)
     if not driver.initialize(): return
+    initialize_standing_pose(driver)
 
     controller = ControllerGo2w("models/go2w/model_700.pt")
     controller.reset()
@@ -27,6 +61,7 @@ def main():
     dt = driver._model.opt.timestep
     steps_per_data = int(driver._dt_data / dt)
     step_count = 0
+    policy_count = 0
 
     print("空格: 暂停/继续  Ctrl+C: 退出\n")
     try:
@@ -44,7 +79,12 @@ def main():
                         obs = controller.build_obs(state, cmd_vel)
                         action = controller.compute_action(obs)
                         p, v, kp, kd = controller.action_to_motor_command(action)
-                        driver.send_command(MotorCommand(positions=p, velocities=v, kp=kp, kd=kd))
+                        command = MotorCommand(positions=p, velocities=v, kp=kp, kd=kd)
+                        driver.send_command(command)
+                        policy_count += 1
+                        if policy_count <= PRINT_FIRST_POLICY_FRAMES:
+                            print(f"\n[POLICY FRAME {policy_count}]")
+                            print_motor_command(command)
                 else:
                     mujoco.mj_forward(driver._model, driver._data)
             elapsed = time.perf_counter() - t_start

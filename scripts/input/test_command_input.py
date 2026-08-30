@@ -32,7 +32,7 @@ def main():
     )
 
     fixed = FixedCommandSource([9.0, -9.0, 0.25]).read()
-    np.testing.assert_allclose(fixed.velocity, [0.5, -0.5, 0.25])
+    np.testing.assert_allclose(fixed.velocity, [1.0, -1.0, 0.25])
 
     keyboard = KeyboardCommandSource.__new__(KeyboardCommandSource)
     keyboard._state = _VelocityState()

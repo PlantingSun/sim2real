@@ -9,7 +9,7 @@
 cd /home/robot/sim2real_ws
 source setup.sh policy
 ls /dev/input/js*
-python scripts/debug_command_input.py --control xbox --joystick /dev/input/js0
+python scripts/input/debug_command_input.py --control xbox --joystick /dev/input/js0
 ```
 
 当前映射：
@@ -30,7 +30,7 @@ python scripts/debug_command_input.py --control xbox --joystick /dev/input/js0
 
 ```bash
 source setup.sh policy
-python scripts/debug_command_input.py --control keyboard
+python scripts/input/debug_command_input.py --control keyboard
 ```
 
 - `p`：使能或停用；默认未使能。
@@ -45,7 +45,7 @@ python scripts/debug_command_input.py --control keyboard
 
 ```bash
 source setup.sh robot
-python scripts/debug_unitree_remote.py --interface enp0s31f6 --raw
+python scripts/input/debug_unitree_remote.py --interface enp0s31f6 --raw
 ```
 
 该脚本只创建 LowState subscriber，不创建 LowCmd publisher。实机已确认：

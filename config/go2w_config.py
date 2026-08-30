@@ -47,6 +47,25 @@ class CTRL:
     COMMAND_LIMITS = np.array([1.0, 1.0, 0.5], dtype=np.float32)
 
 
+class CRRL:
+    """CRRL/go2wcr 策略参数；电机接口仍沿用 ``CTRL``。"""
+
+    NUM_ASSIST_STAGES = 4
+    NUM_ASSIST_PARAMS = 4  # [sin(c_k), cos(c_k), sin(c_{k-1}), cos(c_{k-1})]
+    ASSIST_CURRICULUM_POWER = 1.5
+
+    ACTOR_HIDDEN_DIMS = [256, 256, 256, 256]
+    CRITIC_HIDDEN_DIMS = [512, 256, 128]
+    ACTOR_OBS_DIM = (
+        CTRL.NUM_OBS * CTRL.HISTORY_LENGTH
+        + CTRL.NUM_ACTIONS
+        + NUM_ASSIST_PARAMS
+    )
+    CRITIC_OBS_DIM = 119 + NUM_ASSIST_PARAMS
+    CLIP_OBS = CTRL.CLIP_OBS
+    CLIP_ACTION = CTRL.CLIP_ACTION
+
+
 class DDS:
     """Unitree SDK2/CycloneDDS 通信和实物侧参数。"""
 

@@ -7,7 +7,7 @@
 #
 # Usage:
 #   source setup.sh robot
-#   python scripts/test_dds_driver.py [network_interface]
+#   python scripts/real/test_dds_driver.py [network_interface]
 # ============================================================================
 
 import sys

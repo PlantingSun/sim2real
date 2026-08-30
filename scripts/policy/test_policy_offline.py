@@ -9,7 +9,7 @@
 #
 # Usage:
 #   source setup.sh policy
-#   python scripts/test_policy_offline.py
+#   python scripts/policy/test_policy_offline.py
 # ============================================================================
 
 import sys

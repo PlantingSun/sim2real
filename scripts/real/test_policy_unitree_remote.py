@@ -16,8 +16,9 @@ from config.go2w_config import CTRL, DDS
 from driver.dds_driver import DdsDriver
 from driver.driver_base import MotorCommand
 from policy.controller_go2w import ControllerGo2w
-from scripts.debug_unitree_remote import UnitreeRemoteState
-from scripts.test_policy_real import build_initial_hold_command, print_motor_command
+from policy.controller_go2wcr import ControllerGo2wCR
+from scripts.input.debug_unitree_remote import UnitreeRemoteState
+from scripts.real.test_policy_real import build_initial_hold_command, print_motor_command
 from teleop.command_source import CommandSample
 
 
@@ -125,9 +126,15 @@ class UnitreeRemoteCommandSource:
         pass
 
 
-def main():
+def main(policy_override=None):
     parser = argparse.ArgumentParser(description="Go2W 宇树原装遥控器实机 policy 测试")
-    parser.add_argument("--model", default="models/go2w/model_700.pt")
+    parser.add_argument(
+        "--policy",
+        choices=("go2w", "go2wcr"),
+        default=policy_override or "go2w",
+        help="策略类型（CRRL 使用 go2wcr）",
+    )
+    parser.add_argument("--model", default=None)
     parser.add_argument("--interface", default=DDS.DEFAULT_NET_IF)
     parser.add_argument("--deadzone", type=float, default=0.10)
     parser.add_argument("--lowstate-timeout", type=float, default=0.50)
@@ -137,7 +144,14 @@ def main():
     if args.lowstate_timeout <= 0.0:
         parser.error("--lowstate-timeout must be positive")
 
-    print("=== Go2W 宇树原装遥控器实机测试 ===")
+    if args.model is None:
+        args.model = (
+            "models/go2wcr/model_1499.pt"
+            if args.policy == "go2wcr"
+            else "models/go2w/model_700.pt"
+        )
+
+    print(f"=== Go2W {args.policy} 宇树原装遥控器实机测试 ===")
     print("前提：机器人已由机载服务站立，并已固定到架子或吊绳。")
 
     # 1. 初始化 DDS；DdsDriver.initialize() 不会发送 LowCmd。
@@ -183,7 +197,8 @@ def main():
         )
 
         # 4. 模型加载期间固定位置环继续发送。加载完成后先确认 LowState 仍在更新。
-        controller = ControllerGo2w(args.model)
+        controller_class = ControllerGo2wCR if args.policy == "go2wcr" else ControllerGo2w
+        controller = controller_class(args.model)
         controller.reset()
         remote, age, packets = command_source.snapshot()
         print(
@@ -212,8 +227,13 @@ def main():
             state = driver.get_state()
             obs = controller.build_obs(state, command.velocity)
             action = controller.compute_action(obs)
-            p, v, kp, kd = controller.action_to_motor_command(action)
-            driver.send_command(MotorCommand(positions=p, velocities=v, kp=kp, kd=kd))
+            command_result = controller.action_to_motor_command(action)
+            if isinstance(command_result, MotorCommand):
+                motor_command = command_result
+            else:
+                p, v, kp, kd = command_result
+                motor_command = MotorCommand(positions=p, velocities=v, kp=kp, kd=kd)
+            driver.send_command(motor_command)
 
             loop_count += 1
             if loop_count % print_every == 0:
@@ -231,10 +251,10 @@ def main():
                 )
                 print_motor_command(
                     "[POLICY ACTIVE] 预测 MotorCommand（正在发送）",
-                    p,
-                    v,
-                    kp,
-                    kd,
+                    motor_command.positions,
+                    motor_command.velocities,
+                    motor_command.kp,
+                    motor_command.kd,
                 )
 
             dt = time.perf_counter() - t0

@@ -5,6 +5,10 @@
 将 Go2W 强化学习策略从离线推理和 MuJoCo 仿真部署到实物机器人。当前流程按以下
 5 步执行：驱动检查、策略检查、仿真检查、控制输入检查、实机测试。
 
+完成基础 go2w 链路后，go2wcr/CRRL 按 `06_crrl_policy_test.md` →
+`07_crrl_simulation_test.md` → `08_crrl_real_test.md` 执行；脚本归档规则见
+`09_scripts_layout.md`。
+
 | 步骤 | 文档 | 目标 |
 |------|------|------|
 | 1 | `01_driver_layer.md` | 只读核对 DDS、关节和 IMU 状态 |

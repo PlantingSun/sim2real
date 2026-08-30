@@ -1,7 +1,7 @@
 # Step 5: 实机测试
 
-固定位置环和零速 policy 已由 `scripts/test_policy_real.py` 验证。下一阶段新增
-`scripts/test_policy_unitree_remote.py`，完全使用宇树原装遥控器触发接管和给出速度。
+固定位置环和零速 policy 已由 `scripts/real/test_policy_real.py` 验证。宇树原装
+遥控器入口为 `scripts/real/test_policy_unitree_remote.py`。
 
 ## 前置条件
 
@@ -21,7 +21,7 @@ source setup.sh robot
 先确认状态接收正常：
 
 ```bash
-python scripts/test_dds_driver.py
+python scripts/real/test_dds_driver.py
 ```
 
 Ctrl+C 退出状态检查后再启动实机策略。脚本使用单键确认，不需要按 Enter：
@@ -40,7 +40,7 @@ Ctrl+C 退出状态检查后再启动实机策略。脚本使用单键确认，�
 保持吊绳保护，使用零速度 fixed 输入：
 
 ```bash
-python scripts/test_policy_real.py --control fixed --vx 0 --vy 0 --vyaw 0
+python scripts/real/test_policy_real.py --control fixed --vx 0 --vy 0 --vyaw 0
 ```
 
 按上述顺序操作 `1`、吊起、`2`。重点检查：
@@ -77,7 +77,7 @@ python scripts/test_policy_real.py --control fixed --vx 0 --vy 0 --vyaw 0
 也不读取键盘或 Xbox：
 
 ```bash
-python scripts/test_policy_unitree_remote.py
+python scripts/real/test_policy_unitree_remote.py
 ```
 
 脚本初始化 DDS 并收到原装遥控器数据后：

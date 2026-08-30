@@ -17,24 +17,30 @@ config/         常量/映射/安全限制
 ```bash
 cd /home/robot/sim2real_ws
 source setup.sh policy
-python scripts/test_policy_offline.py
+python scripts/policy/test_policy_offline.py
 
 # MuJoCo（不需要 ROS2，也不会连接机器人）
 source setup.sh mujoco
-python scripts/test_mujoco_pipeline.py
+python scripts/simulation/test_mujoco_pipeline.py
 
 # 实机 DDS（setup 只检查依赖；运行下面脚本才会打开机器人网络）
 source setup.sh robot
-python scripts/test_dds_driver.py
-python scripts/test_policy_real.py --control keyboard
-python scripts/test_policy_real.py --control xbox --joystick /dev/input/js0
-python scripts/test_policy_unitree_remote.py
+python scripts/real/test_dds_driver.py
+python scripts/real/test_policy_real.py --control keyboard
+python scripts/real/test_policy_real.py --control xbox --joystick /dev/input/js0
+python scripts/real/test_policy_unitree_remote.py
 ```
 
-固定速度模式仍兼容：`python scripts/test_policy_real.py --vx 0.1`。键盘/Xbox
-可以先用 `scripts/debug_command_input.py` 离线检查。原装遥控器用
-`scripts/debug_unitree_remote.py` 只读订阅检查；确认数据后使用
-`scripts/test_policy_unitree_remote.py` 触发接管和控制 policy。
+固定速度模式仍兼容：`python scripts/real/test_policy_real.py --vx 0.1`。键盘/Xbox
+可以先用 `scripts/input/debug_command_input.py` 离线检查。原装遥控器用
+`scripts/input/debug_unitree_remote.py` 只读订阅检查；确认数据后使用
+`scripts/real/test_policy_unitree_remote.py` 触发接管和控制 policy。
+
+CRRL/go2wcr 的分步入口和人工复核标准见：
+[`guide/06_crrl_policy_test.md`](guide/06_crrl_policy_test.md)、
+[`guide/07_crrl_simulation_test.md`](guide/07_crrl_simulation_test.md)、
+[`guide/08_crrl_real_test.md`](guide/08_crrl_real_test.md)。脚本目录约定见
+[`scripts/README.md`](scripts/README.md)。
 
 ## 依赖
 

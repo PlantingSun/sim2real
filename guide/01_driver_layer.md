@@ -25,12 +25,12 @@ source setup.sh robot
 ### 2. 运行驱动测试
 
 ```bash
-python scripts/test_dds_driver.py
+python scripts/real/test_dds_driver.py
 ```
 
 如网口名不同，传入参数：
 ```bash
-python scripts/test_dds_driver.py enp0s31f6
+python scripts/real/test_dds_driver.py enp0s31f6
 ```
 
 ### 3. 观察输出
@@ -69,5 +69,5 @@ python scripts/monitor_lowstate.py
 | `config/go2w_config.py` | 所有常量、关节映射、安全限制 |
 | `driver/driver_base.py` | RobotState / MotorCommand 数据类 + DriverBase 抽象类 |
 | `driver/dds_driver.py` | DDS 驱动实现（500Hz 发布 + 内嵌安全） |
-| `scripts/test_dds_driver.py` | 驱动层验证脚本 |
+| `scripts/real/test_dds_driver.py` | 驱动层验证脚本 |
 | `setup.sh` | 环境激活脚本 |
