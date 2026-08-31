@@ -5,7 +5,7 @@
 | 目录 | 用途 | 是否连接机器人 |
 |---|---|---:|
 | `policy/` | go2w/go2wcr 模型加载、观测和动作离线检查 | 否 |
-| `simulation/` | go2w/go2wcr 的 MuJoCo 闭环测试 | 否 |
+| `simulation/` | go2w/go2wcr/go2wwmp 的 MuJoCo 闭环测试 | 否 |
 | `input/` | 键盘、Xbox、原装遥控器输入映射检查 | 只有 `debug_unitree_remote.py` 订阅 LowState |
 | `real/` | DDS 驱动只读检查、go2w/go2wcr 实机接管 | 是 |
 
@@ -20,6 +20,7 @@ CRRL 对应入口：
 
 - `policy/test_policy_go2wcr_offline.py`
 - `simulation/test_mujoco_pipeline_go2wcr.py`
+- `simulation/test_mujoco_pipeline_go2wwmp.py`
 - `real/test_policy_go2wcr_real.py`
 - `real/test_policy_go2wcr_unitree_remote.py`
 
@@ -28,6 +29,7 @@ CRRL 对应入口：
 ```bash
 python scripts/policy/test_policy_go2wcr_offline.py
 python scripts/simulation/test_mujoco_pipeline_go2wcr.py
+python scripts/simulation/test_mujoco_pipeline_go2wwmp.py --check-only
 python scripts/real/test_policy_go2wcr_real.py
 ```
 

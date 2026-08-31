@@ -39,3 +39,98 @@
 - 两个 MuJoCo 入口现在恢复完整 `stand` keyframe，随后执行 `mj_forward()`；helper 验证得到 `base_z=0.430 m`、16 个关节角和全零速度。
 - go2wcr 无 viewer 单步闭环已成功打印 DDS 顺序 MotorCommand，并成功送入 MuJoCo 执行一步。
 - 试验分支将策略历史从数值全零帧改为初始站立零运动帧：5 帧均包含投影重力 `(0, 0, -1)`，角速度、指令、关节偏差、关节速度和上一动作为 0；需由 simulation 和吊架 real test 观察启动瞬态。
+
+## 2026-08-30
+
+- 当前 `scripts/simulation/test_mujoco_pipeline.py` 使用外部 `/home/robot/test_com_ws/src/descriptions/go2w_description/mjcf/go2w_scene.xml`，该场景再 include `go2w.xml`；当前仓库没有自己的 MJCF/mesh 副本。
+- 外部 `go2w.xml` 的 `base` 局部坐标系已有 `depth_camera` 相机；当前相机位置和可视化标记均直接维护在该 XML 中。
+- 历史验证曾使用 MuJoCo viewer 的 `user_scn` 临时几何体；当前已改为在共享 `go2w.xml` 的 `base` body 中直接添加两个不参与物理的 XML geom。
+- 初始验证曾使用过渡坐标 `[0.34, 0.0, 0.096]` 和 `[0.34, -0.022, 0.096]`；该坐标已被用户最终确认的 `[0.34, -0.0375, 0.09]` 替代。
+- 当前站立姿态下标记的期望世界坐标为 `[0.34, -0.0375, 0.52]`；`MjvGeom` 会将圆柱输入尺寸保存为 `[radius, radius, half_length]`。
+- 在基座原方向及绕 `z` 轴旋转两种状态下，历史 user geom 的位置和方向验证通过；当前 XML geom 使用 `contype=0`、`conaffinity=0`，不参与碰撞。当前环境实际 viewer 因 GLFW 无法初始化，未完成窗口截图检查。
+
+## 2026-08-30 调研：D435i 深度参考点
+
+- RealSense 官方 D435i 页面说明：D435i 在 D435 的立体深度能力上增加了 IMU；深度技术为立体深度，深度视场角约 `87° × 58°`，机身尺寸约 `90 × 25 × 25 mm`。
+- RealSense 官方 Projection 文档说明：每个视频流都有独立的 3D 坐标系，`[0, 0, 0]` 位于该流对应的物理成像器中心；点坐标轴为 `x` 向右、`y` 向下、`z` 向前。
+- 同一官方文档说明：深度通常由一个或多个红外成像器产生，RGB 流可以位于不同物理位置；不同流之间要用标定的 extrinsics 平移/旋转转换。因此“深度图像对应的位置”应优先解释为深度成像器/深度坐标系，不是 RGB 镜头或外壳几何中心。
+- 官方 D435/D435i 文档还说明左右红外图像默认已校正，深度图与左 IR 流像素对齐；这支持把深度参考点放在深度立体模组的参考位置，但不能仅凭官网尺寸推出机器人坐标中的 `y=-0.022 m`。
+
+### 本地 WMP 链路与公开 Go2W 案例
+
+- 共享 `go2w.xml` 的 `depth_camera` 已更新为基座局部 `[0.34, -0.0375, 0.09]`，光轴保持朝 `+x` 并向下俯视 `5°`。
+- `/home/robot/simtosim/src/simulator/scripts/go2w_mujoco.py` 直接以 `depth_camera` 渲染 64×64 深度图并发布 `/depth_camera/image_raw`；没有执行深度到 RGB 的对齐。
+- `go2wwmp` 和 `go2wwmpcr` 的 `CallbackDepth()` 直接 reshape raw depth，并送入 64×64 image 输入；因此后续 WMP 参考的是 raw depth stream 的深度坐标系。
+- Unitree-Go2-Robot 的公开 Go2 仓库只给出安装 `ros-humble-realsense2-camera` 和启动方式，没有公布 Go2W 机身到 D435i 的精确 TF/外参；其公开 issue #37 还在请求 D435i 安装支架模型，不能作为本机安装尺寸的证据。
+- 一个公开的 Go2W 传感器描述项目把 D435i 安装在 PiPER 机械臂腕部，并明确说明其外参来自组合 URDF；这与本机“基座前部固定相机”不是同一安装方案。另一个公开 robot_lab Go2W URDF 未包含 D435i 相机，说明公开 Go2W 模型之间并无统一的机身相机外参。
+
+### 对历史 `y=-0.022 m` 假设的判断
+
+- 已证实：若当前程序使用未经对齐的 D435i `depth` 流，参考点应是左 IR 成像器中心（D435i 深度立体模组的深度坐标原点），不是 RGB 镜头中心。
+- 尚未证实：`y=-0.022 m` 是否就是本机左 IR 成像器中心。官方的 `17.5 mm` 是从相机底部 1/4-20 安装孔中心线到左成像器的偏移，参考基准不同，不能直接等同于 Go2W 基座的 `y=-22 mm`。
+- [推断] 若本机基座 `y=0` 恰好对应相机安装中心线，并且相机朝向/左右方向与模型一致，则 `22 mm` 的量级与 D435i 的 `50 mm` 双目 baseline（单侧约 `25 mm`）相近，作为右侧镜头可视化标记是合理的初始假设；但要确定深度原点符号和具体镜头，仍需要核对安装孔/支架基准或读取实机 RealSense extrinsics。
+- 官方资料还给出 D435/D435i 深度起始面的 Z 偏移约 `-4.2 mm`（相对于前盖玻璃的定义），所以深度距离的 Z 零点也不能简单当作外壳前表面；这不影响当前先核对横向 `y` 位置的步骤。
+- 官方 D400 系列数据表给出更具体的机械基准：D435/D435i 的 depth origin X-Y 是左成像器中心；从机身底部 `1/4-20` 三脚架安装孔中心线到左成像器中心的横向偏移为 `17.5 mm`。这个数值可以用于从相机安装孔反推深度原点，但不能直接替代“Go2W 基座坐标到安装孔”的测量。
+- 官方 D435/T265 对齐说明明确区分两种情况：未对齐的 D435 depth frame 与左 IR 成像器中心重合；执行 depth-to-color 对齐后，深度点会转换到 RGB 成像器中心坐标系。当前 `go2wwmp`/`go2wwmpcr` 走的是 raw depth，因此应按前一种解释。
+- 根据用户确认的基座坐标约定 `+x` 前、`+y` 左、`+z` 上，长方体标记已绕基座 `+z` 旋转 90°：相机宽度沿 `y`，厚度沿 `x`，前表面朝 `+x`。红色圆柱的轴线继续保持 `+x`。
+
+## 2026-08-31 D435i 网络读取准备
+
+- 当前笔记本环境可见 `/opt/ros/humble/bin/ros2`，`ROS_VERSION=2`、`ROS_DISTRO=humble`；当前 `sim2real_ws` README 明确声明本项目不依赖 ROS/ROS2。
+- `/home/robot/simtosim` 的相机输入仍是 ROS1 `rospy` 代码，WMP/WMPCR 订阅 `/depth_camera/image_raw`；其 MuJoCo 节点发布的是 `32FC1` 的仿真深度图，不是实机 D435i 的标准 RealSense话题。
+- 因此，实机第一步应把相机采集/网络传输/画面显示作为独立只读链路验证：Orin NX 通过 USB 采集并运行 RealSense ROS2 驱动，笔记本通过 ROS2 DDS 订阅显示；暂不接入 WMP 或任何机器人控制入口。
+- 需要在 Orin NX 上确认实际 ROS2 发行版、`realsense2_camera` 是否安装、相机节点是否已启动，以及两台设备的 ROS2 domain/DDS 网络发现配置；这些信息不能从当前笔记本仓库推断。
+- RealSense 官方 ROS2 wrapper 文档确认 Humble 受支持；当前版本推荐使用 `ros2 launch realsense2_camera rs_launch.py`，默认命名空间通常为 `/camera/camera`，可发布 `/camera/camera/color/image_raw`、`/camera/camera/depth/image_rect_raw` 和对应 `camera_info`/extrinsics 话题。
+- ROS2 官方多机发现文档说明，节点可通过同一子网的 DDS multicast 自动发现；若网络设备或交换机不转发 multicast，则需要配置指定 peer/discovery server。`ROS_LOCALHOST_ONLY` 不能设为 `1`，两端还应保持相同 `ROS_DOMAIN_ID`。
+- 本轮首次官方资料检索因 JavaScript 字符串书写错误失败一次；随后改用合法查询成功取得官方 RealSense wrapper 与 ROS2 文档，未影响判断。
+
+## 2026-08-31 Orin NX 入门任务
+
+- NVIDIA 官方 Jetson 文档把设备访问分为 headed（显示器、键盘、鼠标直接连接）和 headless（通过另一台电脑进入）两类；这为入门顺序提供了框架，但 NVIDIA AGX Orin Developer Kit 的载板接口不能直接当作宇树 Go2W 扩展坞接口。
+- NVIDIA 开发套件文档中，显示器接口是 DisplayPort，USB Type-A 可作为主机连接 USB 设备，USB-C UFP 可用于 USB device mode/虚拟网卡，micro-B 可用于 Debug UART；这些端口能力只对对应 NVIDIA 开发套件载板成立，当前 Go2W 机载载板仍待实物确认。
+- NVIDIA 将 Jetson Orin NX 定位为小型、低功耗边缘 AI 计算平台；官方产品线页面给出 Orin NX 系列最高约 157 TOPS，并强调 JetPack/CUDA-X 软件栈和多传感器接口。实际可用性能还取决于 8GB/16GB 型号、JetPack、功耗模式、散热和载板。
+- Unitree-Go2-Robot 公开 ROS2 仓库说明 D435i/RealSense 驱动应在机器人内部安装运行；这支持“Orin 采集、笔记本接收”的分工，但仓库没有给出本机 Go2W 载板的登录 IP、账号或显示接口。
+- Unitree Robotics 的公开 `teleimager` 项目支持 ARM 架构的 Jetson Orin NX，能够采集 UVC/OpenCV/RealSense 相机，并通过 ZeroMQ PUB-SUB 或 WebRTC 发布视频；它可作为后续非 ROS2 视频通道候选，但不能替代当前首先确认的系统登录、USB 设备和网络状态。
+- 新任务的安全边界：先做电源/显示/键鼠或终端登录、系统信息、网络、USB 和文件传输验证；不刷写系统、不改功耗、不安装大套件、不启动机器人控制、不接入 LowCmd/Sport Mode。
+- NVIDIA 官方 Orin NX 数据表列出 8GB/16GB 两种模块，均为 1024 CUDA cores、32 Tensor cores；旧资料与 JetPack Super Mode 资料中的 TOPS 数值口径不同，因此入门文档应优先记录设备实际型号、JetPack/L4T 版本和当前功耗模式，不把宣传峰值直接当作现场性能。
+- NVIDIA 官方开发套件文档提供了 headed/headless 两种进入方式和 USB 虚拟网卡/Debug UART 方式；但 Go2W 使用的是宇树载板，是否具备对应端口和地址必须现场确认。
+- Unitree 官方组织下的 `teleimager` 文档给出了可选的视频网络方案：Orin NX 端启动 image server，笔记本端用 `--host <Orin IP>` 的 image client，或浏览器访问 WebRTC 端口；它支持 RealSense，但需额外安装其依赖，暂不作为系统入门的第一条路径。
+
+### Go2-W 扩展坞接口与官方推荐进入方式
+
+- 宇树 Go2-W 用户手册的扩展坞接口图/说明列出：`M8` 为雷达接口；两个 `BAT` 为 `16–60V` 电源输入；一个千兆 RJ45 连接 Go2-W，另一个千兆 RJ45 用于用户扩展；`USB-A` 为 `5V/1A` 用户扩展；`USB3.2 Type-C` 用于连接深度相机；另一个“全功能 Type-C”用于连接显示器。
+- 因此对于没有传统 HDMI/DP 的 Go2W 扩展坞，官方推荐的首次图形化进入路径是使用“全功能 Type-C → 显示器”的转换线/扩展坞，再通过 USB-A 连接键盘鼠标。D435i 应占用标注为深度相机的 USB 接口。
+- 当前用户描述的实体接口数量与手册中可能存在差异，不能仅凭外观把唯一 Type-C 端口判断为显示输出或相机输入；应以端口旁的文字/图标和实际线缆连接确认。若确实只有一个 Type-C，需要优先确认它是否为“全功能 Type-C”还是“USB3.2 Type-C 相机口”。
+- 手册 PDF 的网页正文/图示来自 `marketing.unitree.com/article/en/Go2-W/User_Manual.html`；当前浏览工具不能直接打开该营销页面，但可检索到其手册副本中的接口原文，结论以手册接口说明为依据。
+
+### 现场已验证的 Orin NX 状态（用户提供）
+
+- 进入方式已验证：扩展坞全功能 Type-C 经转换器连接外部 HDMI 显示器可用；用户扩展 RJ45 通过 SSH 进入可用。
+- 登录身份：`whoami=unitree`，主机名为 `ubuntu`。凭据中的密码不写入仓库、日志或示例命令。
+- 系统：Ubuntu `20.04.5 LTS (Focal Fossa)`，说明后续 ROS2/RealSense 软件版本必须先按 Ubuntu 20.04 和实际 JetPack/L4T 版本匹配，不能直接套用笔记本的 ROS2 Humble 环境。
+- 网络：`eth0` 为 `UP`，地址为 `192.168.123.18/24`；`lo` 为本地回环；`docker0` 为 `172.17.0.1/16`；`l4tbr0`、`rndis0`、`usb0` 当前为 `DOWN`。这确认当前 SSH 使用有线 `eth0`，而不是 USB gadget 链路。
+- USB：Bus 002 的 USB 3 root hub 下识别到 `8086:0b3a Intel(R) RealSense(TM) Depth Camera 435i`；键盘和 USB Hub 也被识别。D435i 已经在 Orin NX 侧完成物理连接和 USB 枚举。
+- 以上信息由用户现场执行命令得到，属于当前设备事实；下一步可以进入“Orin 本地软件盘点”，但仍不启动相机流或机器人控制。
+
+## 2026-08-31 Go2W WMP 仿真移植核对
+
+- simtosim 的 WMP 推理入口由 `src/controller/scripts/main_go2wwmp.py` 驱动，频率为 50 Hz；它订阅本体 IMU、电机状态、速度命令和 `depth_camera/image_raw`，然后调用 `ControllerGo2wWMP.UpdateObs()` 与 `UpdateAction()`。
+- `src/controller/scripts/lib/controller_go2wwmp/controller_go2wwmp.py` 的实际推理输入为角速度、投影重力、3 维速度命令、12 个腿关节位置偏差、16 个关节速度、上一动作和 5 帧历史；深度/world model 更新每 5 个策略周期执行一次。
+- WMP 深度输入是 `64×64×1`，来自 `32FC1`；原控制器先做 `depth - 0.5`，因此 simtosim 的 MuJoCo 深度被裁剪到 `[0, 2] m` 后再除以 `2`，进入网络的范围约为 `[-0.5, 0.5]`。
+- WMP actor 结构为 `ActorCriticWMP`：历史编码器输出 48 维，world-model 确定性特征经编码器输出 40 维，最后与当前本体/命令/上一动作向量拼接后输出 16 维原始动作；腿关节使用 `0.25` 位置缩放，轮关节使用 `10.0` 速度缩放。
+- world model 配置来自 `go2wwmp_configs.yaml`，默认 CPU、64×64 图像、RSSM `stoch=32, discrete=32, deter=512`，并把 `num_actions` 从 16 扩展为 `16×5=80` 以匹配 5 帧动作历史。
+- WMP checkpoint 已复制到当前项目 `/home/robot/sim2real_ws/models/go2wwmp/model_1750.pt`（约 318 MB）；由于 `.gitignore` 的 `*.pt` 规则，它只作为本地运行文件，不进入 Git。
+- simtosim WMP 源码还包括 Isaac Gym 训练环境 `go2wwmp.py`、地形 `go2wwmp_terrain.py`、训练/恢复 runner `wmp_runner.py` 和 Isaac Gym 播放入口 `playwmp.py`。当前 MuJoCo 验证只需要其网络/观测/动作定义，不应引入 Isaac Gym 或 ROS1 依赖。
+- go2wwmp 的训练相机位置和共享 MuJoCo `depth_camera` 均已统一为 `[0.34, -0.0375, 0.09]`；pipeline 不再提供旧场景相机或额外深度偏移模式。
+- 新适配已通过严格 checkpoint 加载、`obs_now=53`、`history=250`、`wm_feature=512`、16 维动作检查和 6 周期推理；`MotorCommand` 已按当前项目的 DDS 顺序输出。
+- 无窗口环境下可以验证网络链路，但本机 `DISPLAY=:1` 无法创建 GLFW/OpenGL context，故真实 `Renderer` 深度帧和 viewer 闭环必须在 Orin 本地图形桌面或其他可用图形环境中复测。
+- WMP 推理依赖已直接内置到当前项目：`policy/actor_critic_wmp.py`、`policy/dreamer/{models,networks,tools}.py`、`policy/dreamer/__init__.py` 和 `config/go2wwmp_configs.yaml`；`controller_go2wwmp.py` 不再导入 `tensorboard`、外部 `lib` 或 simtosim 源码路径。
+- 内置 Dreamer `MLP` 默认设备已改为 CPU，删除了训练专用 TensorBoard logger；checkpoint 仍可从 simtosim 外部位置读取。
+
+## 2026-08-31 WMP 场景基础修正
+
+- 用户已将 WMP checkpoint 放入当前项目 `models/go2wwmp/model_1750.pt`；由于 `*.pt` 已加入 `.gitignore`，旧的 Git 跟踪权重应从索引移除但保留本地文件，避免破坏现有 go2w/go2wcr 离线运行。
+- D435i/WMP 相机位置已统一为基座坐标 `[0.34, -0.0375, 0.09]`，包括共享 XML 相机、WMP pipeline 和 go2w 可视化标记。
+- simtosim ROS 控制器的额外 `depth - 0.5` 仅作为历史 bug 记录，不再进入当前 controller 或测试参数；WMP 始终采用训练语义深度 `[0,1]`，由 encoder 内部减 `0.5`。
+- WMP 仿真测试将加入约 10 Hz 的 OpenCV 深度图窗口；窗口显示不参与策略计算，策略仍保持 50 Hz。
+- 台阶将加入共享的 `go2w_scene.xml`：沿基座 `+x` 放置，宽度沿 `y` 为 `0.60 m`，每个踏步深度 `0.25 m`、高度差 `0.12 m`，连续五级上升后五级下降；机器人从原点朝台阶前进。

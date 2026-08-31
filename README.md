@@ -22,6 +22,7 @@ python scripts/policy/test_policy_offline.py
 # MuJoCo（不需要 ROS2，也不会连接机器人）
 source setup.sh mujoco
 python scripts/simulation/test_mujoco_pipeline.py
+python scripts/simulation/test_mujoco_pipeline_go2wwmp.py --check-only
 
 # 实机 DDS（setup 只检查依赖；运行下面脚本才会打开机器人网络）
 source setup.sh robot
@@ -42,14 +43,26 @@ CRRL/go2wcr 的分步入口和人工复核标准见：
 [`guide/08_crrl_real_test.md`](guide/08_crrl_real_test.md)。脚本目录约定见
 [`scripts/README.md`](scripts/README.md)。
 
+go2wwmp 的网络、深度输入和 MuJoCo pipeline 验证见
+[`guide/11_wmp_simulation_test.md`](guide/11_wmp_simulation_test.md)。默认 checkpoint
+使用 `models/go2wwmp/model_1750.pt`，不会自动复制或下载。
+
 ## 依赖
 
 - Python 3.8+ (conda unitree_py38)
 - PyTorch (CPU)
+- PyYAML（仅 go2wwmp world model 配置读取）
+- OpenCV/cv2（仅 go2wwmp 深度画面显示）
 - unitree_sdk2py + CycloneDDS 0.10.x
 - MuJoCo 3.1.0+ (仅仿真)
 
 当前管线不依赖 ROS2；旧 `simtosim_ws` 的 ROS 节点应使用它自己的环境。
+
+D435i 在 Orin NX 本地图形桌面采集和显示的只读流程见
+[`guide/10_realsense_network_view.md`](guide/10_realsense_network_view.md)。该流程不接入机器人控制。
+
+如果还没有使用过机载 Orin NX，请先阅读
+[`orin_nx_onboarding/README.md`](orin_nx_onboarding/README.md)，从硬件连接、登录和文件传输开始。
 
 当前架构、接管顺序和安全边界见
 [`guide/00_overview.md`](guide/00_overview.md)。

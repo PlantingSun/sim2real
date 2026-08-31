@@ -5,7 +5,7 @@
 | 目录 | 内容 |
 |---|---|
 | `scripts/policy/` | go2w/go2wcr 模型离线验证 |
-| `scripts/simulation/` | go2w/go2wcr MuJoCo 闭环 |
+| `scripts/simulation/` | go2w/go2wcr/go2wwmp MuJoCo 闭环 |
 | `scripts/input/` | 键盘、Xbox、原装遥控器输入检查 |
 | `scripts/real/` | DDS 只读检查和 go2w/go2wcr 实机控制 |
 
@@ -15,6 +15,7 @@
 
 - `scripts/policy/test_policy_go2wcr_offline.py`
 - `scripts/simulation/test_mujoco_pipeline_go2wcr.py`
+- `scripts/simulation/test_mujoco_pipeline_go2wwmp.py --check-only`
 - `scripts/real/test_policy_go2wcr_real.py`
 - `scripts/real/test_policy_go2wcr_unitree_remote.py`
 

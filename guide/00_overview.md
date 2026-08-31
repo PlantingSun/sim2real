@@ -7,7 +7,7 @@
 
 完成基础 go2w 链路后，go2wcr/CRRL 按 `06_crrl_policy_test.md` →
 `07_crrl_simulation_test.md` → `08_crrl_real_test.md` 执行；脚本归档规则见
-`09_scripts_layout.md`。
+`09_scripts_layout.md`。go2wwmp 当前只进入离线/仿真验证，见 `11_wmp_simulation_test.md`。
 
 | 步骤 | 文档 | 目标 |
 |------|------|------|
