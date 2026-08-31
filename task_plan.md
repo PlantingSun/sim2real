@@ -54,9 +54,9 @@
 
 当前以 Orin 本地图形桌面为后续相机工作主线；SSH、网络传图和远程显示仅保留为已验证的备用记录。go2wwmp 的模型/观测/动作适配和无窗口验证已完成；待在有图形环境的设备上运行实际 MuJoCo viewer，任何实机代码仍须经过用户审查。
 
-## Phase 9 Scope
+## Phase 9 Scope（历史记录）
 
-- 仅修改当前仓库的 MuJoCo 仿真入口，不修改外部 `test_com_ws` 模型文件。
+- 当时仅修改当前仓库的 MuJoCo 仿真入口，不修改外部 `test_com_ws` 模型文件；后续迁移阶段已将资源复制到项目内。
 - 使用 viewer 临时几何体显示 D435i 主体和深度镜头位置；不增加碰撞体、质量或传感器。
 - 修改完成后进行 Python 语法检查、MuJoCo 场景加载和可视化几何配置验证；不启动实机。
 
@@ -125,3 +125,13 @@
 - [x] 在 MuJoCo scene 中增加五级上台阶和五级下台阶，并验证尺寸为高 `0.12 m`、深 `0.25 m`、宽 `0.60 m`。
 
 结果：本地 checkpoint 加载、入口帮助、Python 编译、OpenCV 导入和共享 XML 几何检查均通过；实际图形窗口仍需在 Orin NX 图形桌面上由用户观察确认。
+
+## Phase 18 — 项目可迁移化（completed）
+
+- [x] 盘点当前代码依赖的外部 SDK、MJCF/XML、mesh、配置和运行时资源。
+- [x] 将 Unitree SDK2 Python 源码及当前仿真所需 Go2W XML/mesh 复制到项目内，保留许可证和来源说明。
+- [x] 将所有入口和文档中的外部绝对路径改为项目相对路径，并让默认场景可从任意项目目录解析。
+- [x] 在不连接实机的前提下，验证项目内 SDK 导入、XML 加载、WMP checkpoint、离线策略和 MuJoCo 入口。
+- [x] 明确仍属于操作系统/运行环境的依赖边界，避免把“项目文件自包含”误写成“无需安装 Python/CUDA/DDS”。
+
+结果：项目源码、Unitree SDK2 Python、Go2W MuJoCo MJCF/STL 和路径解析已内置；从 `/tmp` 启动的离线与 XML 检查通过。权重仍因 `.gitignore` 规则不进入 Git，目标设备需要另行复制本地 checkpoint。

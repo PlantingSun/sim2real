@@ -5,8 +5,9 @@ from driver.mujoco_driver import MujocoDriver
 from driver.driver_base import MotorCommand
 from policy.controller_go2w import ControllerGo2w
 from config.go2w_config import CTRL, DDS
+from config.paths import GO2W_SCENE, model_path
 
-DEFAULT_SCENE = "/home/robot/test_com_ws/src/descriptions/go2w_description/mjcf/go2w_scene.xml"
+DEFAULT_SCENE = str(GO2W_SCENE)
 PRINT_FIRST_POLICY_FRAMES = 5
 
 
@@ -52,7 +53,7 @@ def main():
     if not driver.initialize(): return
     initialize_standing_pose(driver)
 
-    controller = ControllerGo2w("models/go2w/model_700.pt")
+    controller = ControllerGo2w(model_path("go2w/model_700.pt"))
     controller.reset()
     cmd_vel = np.array([cmd_vx, cmd_vy, cmd_wz], dtype=np.float32)
 

@@ -4,6 +4,7 @@
 import argparse
 import threading
 import time
+from config.paths import GO2W_SCENE, model_path
 
 import mujoco
 import numpy as np
@@ -13,7 +14,7 @@ from driver.mujoco_driver import MujocoDriver
 from policy.controller_go2wcr import ControllerGo2wCR
 
 
-DEFAULT_SCENE = "/home/robot/test_com_ws/src/descriptions/go2w_description/mjcf/go2w_scene.xml"
+DEFAULT_SCENE = str(GO2W_SCENE)
 PRINT_FIRST_POLICY_FRAMES = 5
 
 
@@ -51,7 +52,7 @@ def print_motor_command(command) -> None:
 def main() -> None:
     parser = argparse.ArgumentParser(description="go2wcr CRRL MuJoCo pipeline test")
     parser.add_argument("scene", nargs="?", default=DEFAULT_SCENE)
-    parser.add_argument("--model", default="models/go2wcr/model_1499.pt")
+    parser.add_argument("--model", default=model_path("go2wcr/model_1499.pt"))
     parser.add_argument("--vx", type=float, default=0.0)
     parser.add_argument("--vy", type=float, default=0.0)
     parser.add_argument("--vyaw", type=float, default=0.0)

@@ -17,6 +17,7 @@ import numpy as np
 import torch
 
 from config.go2w_config import CTRL, DDS_IDX_FROM_CTRL
+from config.paths import model_path
 from policy.controller_go2w import ControllerGo2w
 from driver.driver_base import RobotState
 
@@ -61,12 +62,12 @@ TEST_INPUT = np.array([
 
 
 def main():
-    model_path = "models/go2w/model_700.pt"
+    checkpoint_path = model_path("go2w/model_700.pt")
     print(f"=== Step 2: 策略层离线测试 ===")
-    print(f"模型: {model_path}")
+    print(f"模型: {checkpoint_path}")
 
     # 1. 加载控制器
-    controller = ControllerGo2w(model_path)
+    controller = ControllerGo2w(checkpoint_path)
 
     # 2. compute_action 推理
     obs = torch.tensor(TEST_INPUT, dtype=torch.float32)

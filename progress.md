@@ -109,3 +109,13 @@
 - 共享 `go2w_scene.xml` 增加沿 `+x` 的 5 级上行/5 级下行楼梯，每级高 `0.12 m`、深 `0.25 m`、宽 `0.60 m`；最后一级与地面齐平，避免重叠碰撞体。
 - 已通过本地 checkpoint `--check-only`、Python 编译、OpenCV 导入和 MuJoCo XML 加载检查；实际 viewer 仍需在有图形桌面的机器上由用户观察。
 - 已将共享 XML 中 `depth_camera` 的光轴调整为沿 `+x` 向下 5°；位置保持 `[0.34, -0.0375, 0.09]`，并通过 MuJoCo 相机矩阵检查俯角为 `5.0°`。
+
+### 2026-08-31 项目迁移整理
+
+- 新增 `third_party/unitree_sdk2_python/`，内置 Unitree SDK2 Python 源码、IDL、Go2W 接口和 x86_64/aarch64 CRC 本地库；保留原 BSD-3-Clause 许可证。
+- 新增 `assets/go2w_description/`，内置当前 MuJoCo 所需 `go2w.xml`、`go2w_scene.xml`、楼梯场景文件和 9 个 STL 网格；XML 的 mesh 引用全部使用项目内相对路径。
+- 新增 `config/paths.py`，统一项目根目录、场景和 checkpoint 路径；仿真、离线和实机入口的默认模型/场景路径已改为项目内路径。
+- `setup.sh` 现在从脚本位置识别项目根目录，并优先把项目内 SDK 加入 `PYTHONPATH`；没有固定依赖 `/home/robot/sim2real_ws` 或外部 SDK 工作空间。
+- 移除 VS Code 设置中的固定 Conda 解释器路径，迁移到其他设备后由用户选择目标设备的 Python 环境。
+- 已在 `/tmp` 作为当前目录时通过本地 SDK/CRC 导入、MuJoCo 场景加载、go2w 离线策略、go2wcr 离线策略、WMP `--check-only` 和 `setup.sh robot` 检查；全程未初始化 DDS 或发送机器人指令。
+- 项目文件自包含不等于运行环境自包含：目标设备仍需准备匹配架构的 Python、CycloneDDS、NumPy、PyTorch、OpenCV 和 MuJoCo；`.pt` 权重按既有规则另行复制。

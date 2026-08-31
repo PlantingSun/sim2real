@@ -62,9 +62,9 @@ source setup.sh mujoco   # Python MuJoCo；不连接机器人
 source setup.sh robot    # Unitree DDS；绑定实机网卡
 ```
 
-当前 pipeline 不依赖 ROS2。VS Code 使用 `unitree_py38` 解释器，并通过
-`.vscode/settings.json` 的 `python.analysis.extraPaths` 找到
-`/home/robot/test_com_ws/unitree_sdk2_python`。
+当前 pipeline 不依赖 ROS2。请在目标设备的 VS Code 中选择已经安装好依赖的 Python
+解释器；`.vscode/settings.json` 会自动把项目内 `third_party/unitree_sdk2_python`
+加入分析路径。
 
 ## 实机接管顺序
 

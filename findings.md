@@ -42,7 +42,7 @@
 
 ## 2026-08-30
 
-- 当前 `scripts/simulation/test_mujoco_pipeline.py` 使用外部 `/home/robot/test_com_ws/src/descriptions/go2w_description/mjcf/go2w_scene.xml`，该场景再 include `go2w.xml`；当前仓库没有自己的 MJCF/mesh 副本。
+- 当前 `scripts/simulation/test_mujoco_pipeline.py` 使用项目内 `assets/go2w_description/mjcf/go2w_scene.xml`，该场景再 include 项目内的 `go2w.xml`；所需 MJCF/mesh 已纳入仓库。
 - 外部 `go2w.xml` 的 `base` 局部坐标系已有 `depth_camera` 相机；当前相机位置和可视化标记均直接维护在该 XML 中。
 - 历史验证曾使用 MuJoCo viewer 的 `user_scn` 临时几何体；当前已改为在共享 `go2w.xml` 的 `base` body 中直接添加两个不参与物理的 XML geom。
 - 初始验证曾使用过渡坐标 `[0.34, 0.0, 0.096]` 和 `[0.34, -0.022, 0.096]`；该坐标已被用户最终确认的 `[0.34, -0.0375, 0.09]` 替代。
@@ -125,7 +125,7 @@
 - 新适配已通过严格 checkpoint 加载、`obs_now=53`、`history=250`、`wm_feature=512`、16 维动作检查和 6 周期推理；`MotorCommand` 已按当前项目的 DDS 顺序输出。
 - 无窗口环境下可以验证网络链路，但本机 `DISPLAY=:1` 无法创建 GLFW/OpenGL context，故真实 `Renderer` 深度帧和 viewer 闭环必须在 Orin 本地图形桌面或其他可用图形环境中复测。
 - WMP 推理依赖已直接内置到当前项目：`policy/actor_critic_wmp.py`、`policy/dreamer/{models,networks,tools}.py`、`policy/dreamer/__init__.py` 和 `config/go2wwmp_configs.yaml`；`controller_go2wwmp.py` 不再导入 `tensorboard`、外部 `lib` 或 simtosim 源码路径。
-- 内置 Dreamer `MLP` 默认设备已改为 CPU，删除了训练专用 TensorBoard logger；checkpoint 仍可从 simtosim 外部位置读取。
+- 内置 Dreamer `MLP` 默认设备已改为 CPU，删除了训练专用 TensorBoard logger；checkpoint 默认从项目内 `models/` 读取。
 
 ## 2026-08-31 WMP 场景基础修正
 
@@ -134,3 +134,11 @@
 - simtosim ROS 控制器的额外 `depth - 0.5` 仅作为历史 bug 记录，不再进入当前 controller 或测试参数；WMP 始终采用训练语义深度 `[0,1]`，由 encoder 内部减 `0.5`。
 - WMP 仿真测试将加入约 10 Hz 的 OpenCV 深度图窗口；窗口显示不参与策略计算，策略仍保持 50 Hz。
 - 台阶将加入共享的 `go2w_scene.xml`：沿基座 `+x` 放置，宽度沿 `y` 为 `0.60 m`，每个踏步深度 `0.25 m`、高度差 `0.12 m`，连续五级上升后五级下降；机器人从原点朝台阶前进。
+
+## 2026-08-31 项目迁移盘点
+
+- 当前仓库已由用户提交保存；本轮目标是让项目源码和仿真资源不再依赖 `/home/robot/test_com_ws` 等外部路径。
+- Unitree SDK2 Python 源码位于 `/home/robot/test_com_ws/unitree_sdk2_python`，约 3.0 MB；其中包含 `unitree_sdk2py`、架构相关 CRC 本地库和 BSD-3-Clause 许可证。
+- 当前 Go2W MuJoCo 资源位于 `/home/robot/test_com_ws/src/descriptions/go2w_description`，约 46 MB；当前入口实际需要 `mjcf/go2w.xml`、`mjcf/go2w_scene.xml` 和 `meshes/*.stl`，而不是 ROS/DAE/URDF 全套资源。
+- SDK 源码仍导入 `cyclonedds`，并依赖 Python 解释器、NumPy、OpenCV、PyTorch、MuJoCo 等运行时包；复制 SDK 源码不能替代这些系统/环境依赖。
+- 迁移方案：在项目内增加 `third_party/unitree_sdk2_python/` 和 `assets/go2w_description/`，入口默认路径基于项目根目录解析；仿真/离线模式不初始化 DDS，实机模式仍需用户审查网络接口后执行。

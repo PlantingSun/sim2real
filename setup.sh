@@ -18,24 +18,38 @@ case "$SIM2REAL_MODE" in
         ;;
 esac
 
-SIM2REAL_ROOT="/home/robot/sim2real_ws"
-SIM2REAL_CONDA_SH="/home/robot/miniconda3/etc/profile.d/conda.sh"
-
-if [ ! -f "$SIM2REAL_CONDA_SH" ]; then
-    echo "[ERROR] 找不到 Miniconda: $SIM2REAL_CONDA_SH"
-    return 1 2>/dev/null || exit 1
+SIM2REAL_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+SIM2REAL_CONDA_SH=""
+if [ -n "${CONDA_EXE:-}" ]; then
+    SIM2REAL_CONDA_SH="$(cd "$(dirname "$CONDA_EXE")/.." && pwd)/etc/profile.d/conda.sh"
+elif [ -f "$HOME/miniconda3/etc/profile.d/conda.sh" ]; then
+    SIM2REAL_CONDA_SH="$HOME/miniconda3/etc/profile.d/conda.sh"
 fi
 
-# shellcheck disable=SC1090
-source "$SIM2REAL_CONDA_SH"
-if ! conda activate unitree_py38; then
-    echo "[ERROR] 无法激活 Conda 环境 unitree_py38"
-    return 1 2>/dev/null || exit 1
+if [ ! -f "$SIM2REAL_CONDA_SH" ]; then
+    if command -v python >/dev/null 2>&1; then
+        echo "[WARN] 未找到 Conda，使用当前 Python: $(command -v python)"
+    else
+        echo "[ERROR] 找不到 Conda，也找不到可用的 python"
+        return 1 2>/dev/null || exit 1
+    fi
+else
+    # shellcheck disable=SC1090
+    source "$SIM2REAL_CONDA_SH"
+    if ! conda activate unitree_py38; then
+        echo "[ERROR] 无法激活 Conda 环境 unitree_py38"
+        return 1 2>/dev/null || exit 1
+    fi
 fi
 
 case ":${PYTHONPATH:-}:" in
     *":$SIM2REAL_ROOT:"*) ;;
     *) export PYTHONPATH="$SIM2REAL_ROOT${PYTHONPATH:+:$PYTHONPATH}" ;;
+esac
+SIM2REAL_VENDOR="$SIM2REAL_ROOT/third_party/unitree_sdk2_python"
+case ":${PYTHONPATH:-}:" in
+    *":$SIM2REAL_VENDOR:"*) ;;
+    *) export PYTHONPATH="$SIM2REAL_VENDOR${PYTHONPATH:+:$PYTHONPATH}" ;;
 esac
 
 SIM2REAL_MISSING_MODULES=""

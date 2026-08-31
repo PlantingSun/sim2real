@@ -6,13 +6,14 @@ import argparse
 import numpy as np
 
 from config.go2w_config import CTRL, CRRL, CTRL_IDX_FROM_DDS, DDS_IDX_FROM_CTRL
+from config.paths import model_path
 from driver.driver_base import RobotState
 from policy.controller_go2wcr import ControllerGo2wCR
 
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="go2wcr CRRL offline policy test")
-    parser.add_argument("--model", default="models/go2wcr/model_1499.pt")
+    parser.add_argument("--model", default=model_path("go2wcr/model_1499.pt"))
     args = parser.parse_args()
 
     print("=== Step CRRL-1: go2wcr 策略离线测试 ===")

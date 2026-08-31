@@ -21,7 +21,7 @@ python scripts/simulation/test_mujoco_pipeline_go2wcr.py --vx 0.2
 
 ```bash
 python scripts/simulation/test_mujoco_pipeline_go2wcr.py \
-  /home/robot/test_com_ws/src/descriptions/go2w_description/mjcf/go2w_scene.xml \
+  assets/go2w_description/mjcf/go2w_scene.xml \
   --model models/go2wcr/model_1499.pt
 ```
 

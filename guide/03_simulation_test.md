@@ -30,6 +30,8 @@ python scripts/simulation/test_mujoco_pipeline.py "" 0.0
 python scripts/simulation/test_mujoco_pipeline.py "" 0.2
 ```
 
+默认场景和 STL 网格来自项目内的 `assets/go2w_description`，不依赖外部 MuJoCo 工作空间。
+
 这里直接使用 Python MuJoCo，不 source ROS2，也不会初始化 DDS 或连接实机。
 
 程序加载场景后会恢复 XML 中的 `stand` keyframe：base 高度为 `z=0.43 m`，16 个关节

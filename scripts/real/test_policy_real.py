@@ -21,6 +21,7 @@ from driver.dds_driver import DdsDriver
 from driver.driver_base import MotorCommand
 from policy.controller_go2w import ControllerGo2w
 from config.go2w_config import CTRL, DDS, DDS_IDX_FROM_CTRL
+from config.paths import model_path
 from teleop.command_source import (
     FixedCommandSource,
     KeyboardCommandSource,
@@ -99,7 +100,7 @@ def main():
     parser.add_argument("--vx", type=float, default=0.0, help="前进速度 m/s")
     parser.add_argument("--vy", type=float, default=0.0, help="侧向速度 m/s")
     parser.add_argument("--vyaw", type=float, default=0.0, help="转向速度 rad/s")
-    parser.add_argument("--model", type=str, default="models/go2w/model_700.pt")
+    parser.add_argument("--model", type=str, default=model_path("go2w/model_700.pt"))
     parser.add_argument("--interface", type=str, default=DDS.DEFAULT_NET_IF)
     parser.add_argument("--joystick", type=str, default="/dev/input/js0")
     parser.add_argument("--no-release", action="store_true", help="跳过 Sport Mode 释放")

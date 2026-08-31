@@ -13,6 +13,7 @@ from unitree_sdk2py.core.channel import ChannelSubscriber
 from unitree_sdk2py.idl.unitree_go.msg.dds_ import LowState_
 
 from config.go2w_config import CTRL, DDS
+from config.paths import model_path
 from driver.dds_driver import DdsDriver
 from driver.driver_base import MotorCommand
 from policy.controller_go2w import ControllerGo2w
@@ -146,9 +147,9 @@ def main(policy_override=None):
 
     if args.model is None:
         args.model = (
-            "models/go2wcr/model_1499.pt"
+            model_path("go2wcr/model_1499.pt")
             if args.policy == "go2wcr"
-            else "models/go2w/model_700.pt"
+            else model_path("go2w/model_700.pt")
         )
 
     print(f"=== Go2W {args.policy} 宇树原装遥控器实机测试 ===")

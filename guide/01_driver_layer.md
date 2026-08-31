@@ -11,7 +11,7 @@
 
 - 网线已连接机器人，主机静态 IP `192.168.123.99/24`
 - 机器人已开机
-- Conda unitree_py38 + unitree_sdk2py/CycloneDDS 已安装（不需要 ROS2）
+- Python 环境可导入 CycloneDDS；Unitree SDK2 Python 源码已随项目提供（不需要 ROS2）
 
 ## 步骤
 
@@ -44,14 +44,8 @@ python scripts/real/test_dds_driver.py enp0s31f6
 
 ### 4. 对比验证
 
-另开终端运行现有脚本：
-```bash
-cd /home/robot/test_com_ws
-source scripts/env_setup.sh
-python scripts/monitor_lowstate.py
-```
-
-对比两边输出的关节角度和 IMU 数据，确认一致。
+本项目已内置 Unitree SDK2 Python 源码；本步骤只使用当前项目的
+`test_dds_driver.py` 做只读状态检查，不依赖另一个工作空间中的监视脚本。
 
 ## 通过标准
 
@@ -70,4 +64,4 @@ python scripts/monitor_lowstate.py
 | `driver/driver_base.py` | RobotState / MotorCommand 数据类 + DriverBase 抽象类 |
 | `driver/dds_driver.py` | DDS 驱动实现（500Hz 发布 + 内嵌安全） |
 | `scripts/real/test_dds_driver.py` | 驱动层验证脚本 |
-| `setup.sh` | 环境激活脚本 |
+| `setup.sh` | 环境激活和项目内 SDK 路径准备脚本 |

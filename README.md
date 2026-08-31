@@ -8,6 +8,8 @@ Unitree Go2W 机器人 sim-to-real 控制系统。不使用 ROS/ROS2，纯 Pytho
 driver/         关节驱动层 (DDS 实物 / MuJoCo 仿真)
 policy/         网络推理层 (纯 PyTorch, 无 ROS)
 config/         常量/映射/安全限制
+assets/         项目内 MuJoCo XML 和 Go2W 网格
+third_party/    项目内 Unitree SDK2 Python 源码
 ```
 
 安全逻辑嵌入 driver 的 500Hz 发布循环，不单独开线程。
@@ -55,6 +57,13 @@ go2wwmp 的网络、深度输入和 MuJoCo pipeline 验证见
 - OpenCV/cv2（仅 go2wwmp 深度画面显示）
 - unitree_sdk2py + CycloneDDS 0.10.x
 - MuJoCo 3.1.0+ (仅仿真)
+
+Unitree SDK2 Python 源码和 CRC 本地库已随项目提供；CycloneDDS、Python、NumPy、
+PyTorch、OpenCV 和 MuJoCo 仍属于目标设备上的运行环境依赖，需要按设备架构安装。
+
+迁移说明：项目内的 MuJoCo 资源位于 `assets/go2w_description`，Unitree SDK2 Python
+源码位于 `third_party/unitree_sdk2_python`。策略权重因体积被 `.gitignore` 忽略，迁移时
+需要另行复制 `models/README.md` 中列出的本地 checkpoint。
 
 当前管线不依赖 ROS2；旧 `simtosim_ws` 的 ROS 节点应使用它自己的环境。
 

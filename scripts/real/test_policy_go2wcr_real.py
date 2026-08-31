@@ -6,6 +6,7 @@ import signal
 import time
 
 from config.go2w_config import CTRL, DDS
+from config.paths import model_path
 from driver.dds_driver import DdsDriver
 from policy.controller_go2wcr import ControllerGo2wCR
 from scripts.real.test_policy_real import (
@@ -22,7 +23,7 @@ def main() -> None:
     parser.add_argument("--vx", type=float, default=0.0)
     parser.add_argument("--vy", type=float, default=0.0)
     parser.add_argument("--vyaw", type=float, default=0.0)
-    parser.add_argument("--model", default="models/go2wcr/model_1499.pt")
+    parser.add_argument("--model", default=model_path("go2wcr/model_1499.pt"))
     parser.add_argument("--interface", default=DDS.DEFAULT_NET_IF)
     parser.add_argument("--joystick", default="/dev/input/js0")
     parser.add_argument("--no-release", action="store_true", help="跳过 Sport Mode 释放")

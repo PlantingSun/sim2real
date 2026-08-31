@@ -4,19 +4,19 @@
 import argparse
 import threading
 import time
-from pathlib import Path
 
 import mujoco
 import numpy as np
 
 from config.go2w_config import CTRL, DDS
+from config.paths import GO2W_SCENE, model_path
 from driver.driver_base import RobotState
 from driver.mujoco_driver import MujocoDriver
 from policy.controller_go2wwmp import ControllerGo2wWMP
 
 
-DEFAULT_SCENE = "/home/robot/test_com_ws/src/descriptions/go2w_description/mjcf/go2w_scene.xml"
-DEFAULT_MODEL = str(Path(__file__).resolve().parents[2] / "models/go2wwmp/model_1750.pt")
+DEFAULT_SCENE = str(GO2W_SCENE)
+DEFAULT_MODEL = model_path("go2wwmp/model_1750.pt")
 TRAINED_CAMERA_POS = np.array([0.34, -0.0375, 0.09], dtype=np.float64)
 PRINT_FIRST_POLICY_FRAMES = 5
 DEPTH_DISPLAY_INTERVAL = 5  # 50 Hz policy / 5 = approximately 10 Hz display
