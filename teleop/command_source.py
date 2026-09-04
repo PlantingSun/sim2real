@@ -11,7 +11,7 @@ from typing import Dict, Tuple
 
 import numpy as np
 
-from config.go2w_config import CTRL
+from config.go2w_config import CTRL, DDS
 
 
 @dataclass(frozen=True)
@@ -137,7 +137,7 @@ class XboxCommandSource:
 
     def __init__(
         self,
-        device: str = "/dev/input/js0",
+        device: str = DDS.DEFAULT_JOYSTICK,
         deadzone: float = 0.10,
         deadman_button: int = 0,
         quit_button: int = 6,
@@ -183,6 +183,8 @@ class XboxCommandSource:
                 event = os.read(self._fd, self.EVENT_SIZE)
             except BlockingIOError:
                 return
+            except OSError as exc:
+                raise RuntimeError(f"joystick read failed: {self._device}") from exc
             if not event:
                 raise RuntimeError(f"joystick disconnected: {self._device}")
             if len(event) != self.EVENT_SIZE:

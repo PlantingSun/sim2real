@@ -131,7 +131,7 @@
 
 - 用户已将 WMP checkpoint 放入当前项目 `models/go2wwmp/model_1750.pt`；由于 `*.pt` 已加入 `.gitignore`，旧的 Git 跟踪权重应从索引移除但保留本地文件，避免破坏现有 go2w/go2wcr 离线运行。
 - D435i/WMP 相机位置已统一为基座坐标 `[0.34, -0.0375, 0.09]`，包括共享 XML 相机、WMP pipeline 和 go2w 可视化标记。
-- [已由 2026-09-04 逐行复审修正] 先前曾把 ROS controller 的 `depth - 0.5` 判作额外偏移；训练环境源码证明该偏移属于 checkpoint 的真实输入语义，当前 controller 已恢复。
+- simtosim ROS 控制器的额外 `depth - 0.5` 仅作为历史 bug 记录，不再进入当前 controller 或测试参数；WMP 始终采用训练语义深度 `[0,1]`，由 encoder 内部减 `0.5`。
 - WMP 仿真测试将加入约 10 Hz 的 OpenCV 深度图窗口；窗口显示不参与策略计算，策略仍保持 50 Hz。
 - 台阶将加入共享的 `go2w_scene.xml`：沿基座 `+x` 放置，宽度沿 `y` 为 `0.60 m`，每个踏步深度 `0.25 m`、高度差 `0.12 m`，连续五级上升后五级下降；机器人从原点朝台阶前进。
 
@@ -143,25 +143,109 @@
 - SDK 源码仍导入 `cyclonedds`，并依赖 Python 解释器、NumPy、OpenCV、PyTorch、MuJoCo 等运行时包；复制 SDK 源码不能替代这些系统/环境依赖。
 - 迁移方案：在项目内增加 `third_party/unitree_sdk2_python/` 和 `assets/go2w_description/`，入口默认路径基于项目根目录解析；仿真/离线模式不初始化 DDS，实机模式仍需用户审查网络接口后执行。
 
-## 2026-09-04 Go2WWMP 深度链路复审（已完成）
+## 2026-09-03 Orin NX 环境结论
 
-- simtosim MuJoCo 发布端 `go2w_mujoco.py` 的原始路径是：`Renderer.render()` → clip 到 `[0, 2] m` → 除以 `2` → 以 `32FC1` 发布，因此 ROS 消息中的数值语义为 `[0, 1]` 的 2 m 归一化深度。
-- simtosim 旧 `ControllerGo2wWMP.CallbackDepth()` 随后执行 `depth - 0.5`，把消息变为 `[-0.5, 0.5]`；训练环境源码确认该行为是 checkpoint 所需语义。
-- 修复前的 `render_depth()` 会把 NaN/+Inf 当作 2 m、-Inf 当作 0 m，再裁剪归一化；controller 则要求输入已经是有限的 `[0,1]`。修复后 renderer 只返回米制深度，controller 把所有非有限值按远平面处理并统一生成训练输入，且已有独立回归测试。
-- 训练环境 `Go2wWMP.normalize_depth_image()` 明确执行 `(depth_m / 2) - 0.5`，所以 world-model 收到的是 `[-0.5, 0.5]`，而不是 `[0,1]`。Dreamer `ConvEncoder.forward()` 还会再执行 `obs -= 0.5`；无论这项网络内部设计是否理想，部署必须匹配训练 checkpoint 的真实输入分布。
-- 因而 simtosim 旧 ROS controller 的 `depth - 0.5` 与训练数据一致；当前 sim2real controller/pipeline 省略该中心化是确定的输入分布偏移 bug。修复应建立清晰的单一边界：pipeline 产生米制深度，controller 负责按训练配置做裁剪和中心化，避免调用方把“已归一化”误当“网络输入”。
-- 训练相机是 64×64、水平 FOV 58°，安装 pitch 在 `[-10°, 0°]` 随机化；当前 MuJoCo 方形相机 `fovy=58°`，因此水平 FOV 也为 58°，固定 -5° 位于训练范围中。
-- RSSM `obs_step()` 在首帧会在 `prev_state is None` 时把 prev_action 强制置零，因此当前首帧传入的 80 维零动作不会改变初始化行为。
-- 修复前 controller 只在 `counter % 5 == 0` 时向 `wm_action_history` 写入一次 `last_action`，第二次更新实际给出 `[0,0,0,0,a4]`；现已改为每个 policy step 记录动作，RSSM 收到 `[a0,a1,a2,a3,a4]`。
-- 训练观测对 yaw command 使用 `commands_scale[2] = obs_scales.ang_vel = 0.25`；修复前 WMP controller 与 simtosim 旧 ROS controller 均遗漏，当前移植层已按训练分布补齐。
-- 训练环境在策略前把观测裁剪到 `[-100,100]`；当前 controller 已增加完整 prop 的 finite 检查和同范围裁剪，阻止 NaN/Inf 或异常速度污染策略状态。
-- 训练 runner/playback 的策略历史初始化为全零，再只插入当前一帧观测；修复前 WMP `reset()` 把全部 5 帧 gravity 预填成 `-1`，当前已恢复“4 帧零 + 1 帧当前观测”的训练语义，未改动 go2w/go2wcr controller。
-- 当前项目场景可在 `MUJOCO_GL=egl` 下无窗口渲染真实 depth buffer；站立姿态得到 64×64 float32 米制深度，范围约 `0.634–40.001 m`。上方无命中/远景接近 40 m、下方地面约 0.824 m，说明 Renderer 输出是米制距离且图像上下方向符合“上方远、下方近”；送入网络前必须裁剪到 2 m。
-- XML 相机在站立姿态下的基座局部光轴实测为约 `[0.9962, 0, -0.0872]`，即沿 `+x` 向下 5°；位置 `[0.34,-0.0375,0.09]`、方形画面的 `fovy=58°` 均与当前训练配置一致。
-- 修复后的真实 checkpoint + EGL 集成闭环已运行 6 个 50 Hz policy 帧，分别在第 1、6 帧渲染/更新深度；相机检查、world model、Actor、MotorCommand 回写和 MuJoCo 物理步均成功，状态保持有限。
-- 训练 `depth_buffer` 长度为 2，更新后通过 `[:, -2]` 选择上一张图；除首次初始化两张相同图外，world model 实际消费约 100 ms 前的 10 Hz 深度。当前 controller 已显式保留上一张预处理深度以复现该延迟。
-- 训练环境在执行物理前把 Actor action 裁剪到 `[-100,100]`；当前 controller 也在写入 RSSM 动作历史和转换 MotorCommand 前应用相同裁剪。
-- 原 `--check-only` 用 Ctrl 顺序的初始关节数组直接构造了声明为 DDS 顺序的 `RobotState`，导致 controller 再映射后得到错误站姿；现已先用 `DDS_IDX_FROM_CTRL` 转换，离线单步与真实 driver 接口一致。
-- Dreamer `ConvEncoder.forward()` 会执行原地 `obs -= 0.5`，而 `torch.as_tensor(numpy_array)` 共享底层内存。增加延迟缓存时若直接返回缓存数组，缓存会被修改并在下一次再减 0.5；当前 `_select_delayed_depth()` 对保存值和返回值都显式复制，避免重复中心化。
-- 工作区当前 WMP 默认 checkpoint 已切换为 `model_6000.pt`，本地另有 1750/3500/5500；保留该默认选择并同步 README/guide，100 帧集成验证使用 6000 严格加载通过。
-- `model_6000.pt` 在 `vx=0.6 m/s` 下完成 300 个 policy 帧（6 s 仿真）的 EGL 闭环，最终 base 约为 `[4.268, 0.227, 0.396] m`。机器人从 x=0 越过了场景楼梯所在的 x=0.8–3.3 m 区域，过程中 60 次深度更新、策略动作和 MuJoCo 状态均保持有限；实际姿态细节仍需 viewer 人工观察。
+- 当前系统的正确项目基座是 `/usr/bin/python3.8`；Python 3.9 会误用为 3.8 编译的系统
+  NumPy 路径且缺少 `cv2`，Python 2.7 则是裸 `python` 的旧默认值。
+- `.venv` 激活本身没有推理开销。CPU 推理性能由 PyTorch/BLAS 构建、线程数、CPU 频率、
+  25W 功耗和网络结构决定，不由 Conda 与 venv 的选择决定。
+- PyPI 提供可用的 CPython 3.8/aarch64 wheel：PyTorch 2.0.0 和 MuJoCo 3.2.3；当前
+  PyTorch 明确为 CPU-only，`torch.cuda.is_available()` 为 false。
+- 系统 MuJoCo/OpenCV 与 PyTorch wheel 使用不同的 `libgomp`；后加载 PyTorch 会触发
+  static TLS 错误。仿真入口固定先导入 PyTorch，避免用全局双 `libgomp` 预加载污染进程。
+- 宇树 SDK 固定 CycloneDDS 0.10.2。系统 ROS Foxy 同时带有 CycloneDDS 0.7，若保留
+  `/opt/ros/foxy` 的 `LD_LIBRARY_PATH`，0.10.2 `idlc` 会出现未定义符号；清除 ROS 路径后
+  同一源码和对象文件链接成功。
+- 当前仓库没有 ONNX 模型或 PyTorch→ONNX 等价性验证，故不把 ONNX Runtime 加入基础环境。
+  应先复制 `.pt`、测量 50 Hz 单步延迟与抖动，再判断是否转换。
+
+## 2026-09-03 Orin DDS driver 结论
+
+- Orin 的 `eth0` 可直接发现机器人 LowState publisher；迁移不改变 DDS topic、Domain ID 或
+  消息类型，主要变化是网络接口和策略进程所在主机。
+- 实测 LowState Tick 约为 1 kHz，关节和 IMU 数据稳定；driver 只读阶段通过。
+- SDK `LowState.power_v`/`power_a` 表示电压/电流。项目此前将 `power_v` 保存为
+  `battery_soc` 并打印百分号，语义错误但未进入策略观测；已修正字段名和输出。
+
+## 2026-09-03 Orin policy 延时结论
+
+- 50 Hz 对应 20 ms 单帧预算；只看平均吞吐会掩盖周期性超时，因此同时记录 P99、最大值
+  和 deadline miss 数量。
+- go2w/go2wcr 在单线程完整 policy pipeline 中分别达到 P99 `1.911/3.967 ms`，2000 帧
+  均无超时。相比 2/4/8 线程，单线程已有充足余量且更少争用 CPU。
+- WMP actor-only P99 为 `2.832 ms`，但四线程 world-model 更新帧平均 `31.009 ms`；
+  其总体平均吞吐虽超过 50 Hz，仍不满足每 20 ms 产生新动作的当前同步实现。
+- 不能通过降低 world-model 更新频率直接掩盖问题，因为这会改变训练/部署语义。ONNX、
+  TorchScript、量化或异步更新均需单独做数值等价性与时序验证后才能采用。
+
+## 2026-09-03 Xbox 输入结论
+
+- Orin 当前接收器不是 USB VID/PID 意义上的 Microsoft Xbox 设备，而是 `BEITONG A1T2 BFM
+  DONGLE`（`20bc:504d`）；应以 udev 稳定名称识别，不把 `js0` 编号写死为硬件身份。
+- 当前 Linux joystick 节点报告 8 轴/16 按键；现有 `XboxCommandSource` 的默认接口
+  `axis_indices=(1,0,3)`、A=button 0、Back=button 6 仍需通过实际按键事件确认，不能仅凭
+  接收器名称推断。
+- 离线输入程序只读取 joystick API，不导入 DDS；未使能时返回零速度，速度进入 policy 前仍
+  按 `CTRL.COMMAND_LIMITS` 裁剪。
+
+## 2026-09-03 Real-test 审查结论
+
+- real test 进程只导入 Unitree SDK/CycloneDDS、NumPy 和 CPU policy；不导入 ROS、MuJoCo 或
+  WMP，当前 OpenMP 隔离不会与实机路径叠加冲突。
+- `setup.sh robot` 固定 `eth0`、Domain 0、`rt/lowstate`/`rt/lowcmd` 和 500 Hz；这些参数
+  与前面的 Orin DDS 只读验证一致，无需为本地运行增加笔记本网络分支。
+- `DdsDriver.initialize()` 只创建 LowState subscriber 和 LowCmd publisher，不写 LowCmd；
+  `1` 执行一次 StandUp，`2` 执行 ReleaseMode，成功后才发送固定站姿首帧。
+- 固定站姿首帧、模型加载期间的零阶保持和 Ctrl+C/Back 后的紧急阻尼路径均保留。新增的
+  command shape/NaN 检查只拒绝坏数据，不改变合法网络输出。
+
+## 2026-09-03 Sport Mode 恢复结论
+
+- `ReleaseMode()` 后 `CheckMode()` 返回空模式，直接调用 `SportClient.StandUp()` 不足以
+  恢复 Go2W 的高层运动服务。
+- 宇树官方 SDK2 MotionSwitcher 示例将轮式机器人模式写为 `ai-w`；官方 Go2W 示例将其
+  映射为 `wheeled_sport(go2W)`。恢复操作应使用 `SelectMode("ai-w")`，再调用 `StandUp()`。
+- 已将模式恢复拆为 `scripts/real/select_wheeled_sport.py`；`DdsDriver.stand_up()` 保持单一
+  `SportClient.StandUp()` 调用，便于分别验证模式切换和站立请求。
+
+## 2026-09-03 Orin 机载控制异常排查
+
+- `test_policy_real.py --log <path>` 记录每个策略周期的 LowState、命令速度、推理耗时和
+  实际发送的 MotorCommand；不指定参数时运行路径不变。
+- 官方 SDK2 低层示例使用 2 ms（500 Hz）周期发布 `rt/lowcmd`，所以必须同时检查
+  policy 50 Hz 周期和 LowCmd 500 Hz 发布线程，而不能只看平均推理耗时。
+- 当前优先排查 CPU 调度抖动、DDS 上的其他 LowCmd 发布者、ReleaseMode 后接管时序，
+  以及状态/动作顺序或单位不一致。日志中的 `state_tick`、`loop_dt_ms` 和输出 `p/v`
+  可先区分这些类别。
+
+## 2026-09-03 分层频率结果
+
+- 纯 go2w policy：500 帧平均约 1.76 ms，无一帧超过 10 ms。
+- 实机 print-only：约 35.1 Hz，`loop_dt_ms` 平均 22.2 ms；说明即使不发送 policy
+  action，LowCmd 线程或 DDS/CPU 调度也会造成额外竞争。
+- 实机完整 policy：约 32.3 Hz，`loop_dt_ms` 平均 25.7 ms；相比 print-only 进一步
+  变慢，说明发送路径和完整动作处理仍有额外开销。
+- 这不是“多线程必然失败”，而是 Python policy、500 Hz DDS 回调和系统调度共享 CPU
+  时产生抖动；下一步应测量线程 CPU 占用并隔离 policy 与 LowCmd 的核/进程。
+
+## 2026-09-03 双进程联合验证
+
+- 4.8 `print-only` 联合测试在模型加载后稳定约 49.1–49.4 Hz，policy 推理约 2.1–2.3 ms。
+- 去掉 `--print-only` 后，零速度和轻微扰动下的实机表现明显优于原单进程版本。
+- 这表明 policy 与 DDS/LowCmd 的进程隔离解决了主要调度竞争问题；4.7 的 LowCmd 仍稳定
+  在约 500 Hz。当前参数固定为 policy CPU 2、LowCmd CPU 1、PyTorch 1 thread、policy 50 Hz。
+
+## 2026-09-04 policy_mp.csv 抖动分析
+
+- 1765 个记录周期约 35.64 秒；活跃阶段约 49.45 Hz，循环耗时平均 4.66 ms，policy
+  推理 P50/P95/P99 分别约 2.33/2.59/2.83 ms，最大 3.65 ms。
+- LowState tick 没有重复或倒退，绝大多数相邻 policy 帧的 tick 增量为 20；未发现足以
+  解释持续抖动的状态断流或计算超时。
+- 预热固定姿态时，腿部目标相邻帧平均变化约 0.001–0.004 rad；实际闭环接管且速度命令
+  为零时，部分关节平均变化约 0.10–0.13 rad，单帧最大变化约 0.35–0.48 rad。
+- 结论：当前证据排除“Orin 算力不足”和明显 DDS 状态丢失；抖动是 policy 接管后形成的
+  闭环振荡。下一步应比较笔记本/Orin 的模型哈希、PyTorch 版本和完全相同 observation
+  的 action，并补充 IMU、原始 action、状态接收时刻及命令提交时刻日志。
+- 当前 Orin 模型 SHA-256：
+  `5105a856191fd19f7ee0755b8839f3f5a245b4b6040778351c604b037dba0ebf`；运行环境为
+  aarch64、PyTorch 2.0.0、NumPy 1.24.4。

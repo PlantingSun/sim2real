@@ -87,10 +87,10 @@
 
 - 已完整核对 simtosim 的 WMP 控制器、网络结构、world-model 配置、Isaac Gym 训练环境、播放入口和 ROS1 主循环的职责边界。
 - 已确认 WMP checkpoint 已复制到当前项目 `models/go2wwmp/model_1750.pt`，约 303.2 MiB，包含 `model_state_dict`、`world_model_dict` 以及训练恢复用的优化器/深度预测器状态；该权重被 `.gitignore` 忽略。
-- [后续复审已修正] 当时怀疑 ROS controller 的 `depth - 0.5` 是额外偏移；2026-09-04 核对训练环境后确认该偏移必须保留。
+- 已发现需要在移植测试中明确区分“训练时深度归一化”和 simtosim ROS 控制器当前的 `depth - 0.5` 处理：训练环境输出 `[0, 1]`，world-model 的卷积编码器内部再减 `0.5`；若控制器先减一次再送入 encoder，会形成额外偏移。这是 pipeline 审查重点，不能无提示地掩盖。
 - 第一次移植检查暴露并修正两个 simtosim→CPU 兼容问题：内部 `MLP` 默认 device 为 `cuda`，以及 PyYAML 将 `1e-4` 解析为字符串；适配层已分别强制 CPU 默认和递归转换数值字符串。
 - 已新增 `policy/controller_go2wwmp.py` 与 `scripts/simulation/test_mujoco_pipeline_go2wwmp.py`；checkpoint 严格加载、无窗口单步和 6 周期推理均通过。
-- [后续复审已修正] 当时把 `[0,1]` 误判为最终训练输入；真实训练输入在进入 encoder 前已经是 `[-0.5,0.5]`。
+- 已确认 WMP 的默认训练深度语义为 `[0,1]`，world-model encoder 内部再减 `0.5`；复现 simtosim ROS 额外减法时，第二次 world-model 更新后的动作与训练模式最大差异约 `0.057`。
 - 当前 MuJoCo Viewer/Renderer 仍受本机 `DISPLAY=:1` 无法打开和 OpenGL context 不可用限制，未宣称实际窗口闭环通过；代码路径待在有图形桌面的 Orin/笔记本上运行验证。
 - 已完成 Orin 入门文档精简：本地显示器/键鼠为主线，SSH/文件传输和联网安全保留为备用；没有删除现场设备档案。
 - 已通过 `git diff --check`、新入口 Python 编译检查和 `--help` 检查；没有执行任何 DDS、LowCmd、Sport Mode 或真实机器人操作。
@@ -105,7 +105,7 @@
 
 - WMP 默认 checkpoint 已改为当前项目 `models/go2wwmp/model_1750.pt`；旧 `go2w`/`go2wcr` 权重从 Git 索引移除但保留在本地，便于既有离线测试继续使用。
 - 共享 `go2w.xml`、WMP pipeline 和 go2w D435i viewer 标记统一使用基座坐标 `[0.34, -0.0375, 0.09]`。
-- [后续复审已修正] 该轮曾删除必要的深度偏移；2026-09-04 已改为 controller 接收米制深度并恢复训练语义的中心化。OpenCV 窗口仍按 10 Hz 深度更新显示。
+- 删除旧 ROS 深度偏移入口；WMP 固定接收训练语义的 `[0, 1]` 深度图。MuJoCo pipeline 增加 OpenCV 黑白灰度深度窗口，按 50 Hz 策略的每五帧约 10 Hz 更新。
 - 共享 `go2w_scene.xml` 增加沿 `+x` 的 5 级上行/5 级下行楼梯，每级高 `0.12 m`、深 `0.25 m`、宽 `0.60 m`；最后一级与地面齐平，避免重叠碰撞体。
 - 已通过本地 checkpoint `--check-only`、Python 编译、OpenCV 导入和 MuJoCo XML 加载检查；实际 viewer 仍需在有图形桌面的机器上由用户观察。
 - 已将共享 XML 中 `depth_camera` 的光轴调整为沿 `+x` 向下 5°；位置保持 `[0.34, -0.0375, 0.09]`，并通过 MuJoCo 相机矩阵检查俯角为 `5.0°`。
@@ -120,20 +120,81 @@
 - 已在 `/tmp` 作为当前目录时通过本地 SDK/CRC 导入、MuJoCo 场景加载、go2w 离线策略、go2wcr 离线策略、WMP `--check-only` 和 `setup.sh robot` 检查；全程未初始化 DDS 或发送机器人指令。
 - 项目文件自包含不等于运行环境自包含：目标设备仍需准备匹配架构的 Python、CycloneDDS、NumPy、PyTorch、OpenCV 和 MuJoCo；`.pt` 权重按既有规则另行复制。
 
-## 2026-09-04 Go2WWMP simulation pipeline 复审
+## 2026-09-03 Orin NX 环境配置
 
-- 开始重新审计 `/home/robot/simtosim/src` 与当前项目的完整深度链路。
-- 已确认工作区开始时为干净状态；本轮将保留现有架构边界，不执行任何实机通信。
-- 已读取当前 WMP controller/pipeline 与 simtosim ROS controller/MuJoCo 发布端，开始建立训练—仿真—部署的深度数值链路对照。
-- 已定位深度中心化、5 帧动作历史、yaw command 缩放和 WMP 启动历史四项与训练代码不一致的问题。
-- 已修复 WMP controller 与 simulation pipeline，深度接口现在明确接收“米”，controller 统一生成训练用 `[-0.5,0.5]` 图像；深度只在 10 Hz world-model 帧渲染。
-- 已新增 `tests/test_go2wwmp_pipeline.py`，5 项回归测试全部通过；相关 Python 文件编译通过。
-- 已新增 `--headless-frames` 模式，并用项目内 `model_1750.pt`、场景和 EGL 完成 6 帧真实 depth → WMP → MotorCommand → MuJoCo 闭环。
-- 已补齐训练中的一张 10 Hz 深度帧延迟与 action clip 语义；深度延迟回归测试已加入。
-- 修正 `--check-only` 的 Ctrl/DDS 初始关节顺序，并更新 WMP 指南与项目入口示例。
-- 使用默认 `model_6000.pt` 以 `vx=0.6` 完成 300 帧/6 s 无窗口闭环，base 从原点运行到 `x=4.268 m`，跨过楼梯场景范围且无 NaN/Inf。
-- WMP 网络源码与 simtosim 对比仅保留既有 CPU device 和 TensorBoard 训练日志移除两类预期差异；world-model YAML 无差异。
-- go2w/go2wcr 离线回归、WMP 6 项单元测试、全相关目录 compileall、`--help`、checkpoint 严格加载和 `git diff --check` 均通过。
-- Phase 19 完成；未运行 DDS、LowCmd、Sport Mode 或任何真实机器人控制。
-- 用户确认可使用 `model_5500.pt` 或 `model_6000.pt`；两者均完成 strict load 和 6 帧 EGL 闭环。
-- 新增 `guide/12_go2wwmp_pipeline_review.md`，详细记录深度 `clip(depth_m,0,2)/2-0.5`、encoder 二次减法、无效值、100 ms 延迟、动作历史和模型对照方法。
+- 只读确认当前设备为 aarch64 Ubuntu 20.04.5、L4T R35.3.1、8 核/16 GiB、25W mode 3。
+- 确认 `python` 指向 2.7；Python 3.9 无法加载系统 NumPy/OpenCV；项目固定使用系统
+  Python 3.8.10 派生的 `.venv`，不安装 Conda。
+- 在 `.venv` 中安装 NumPy 1.24.4、CPU-only PyTorch 2.0.0、MuJoCo 3.2.3 和
+  CycloneDDS Python 0.10.2；CycloneDDS C 0.10.2 同样安装在 `.venv`。
+- 构建时发现系统全局 ROS Foxy 的 `LD_LIBRARY_PATH` 会让 0.10.2 `idlc` 链接到 ROS 的
+  CycloneDDS 0.7；清除 ROS 环境变量后构建通过，已将该隔离写入 `setup.sh`。
+- MuJoCo/OpenCV 与 ARM64 CPU PyTorch 使用不同 `libgomp`；仿真入口已固定先导入
+  PyTorch，且移除 `setup.sh`、VS Code 的全局双库 `LD_PRELOAD`。
+- 新增 `requirements/orin.lock`、Orin 环境安装/验证脚本、`.vscode` 配置和
+  `guide/12_orin_environment.md`；默认实机网口收敛为 `eth0`。
+- 三个 checkpoint 已由用户复制到 controller 要求的精确路径；policy 执行性仍按下一阶段
+  顺序单独验证。本环境阶段没有初始化 DDS 或执行任何机器人控制。
+
+## 2026-09-03 Orin DDS driver
+
+- 记录三个目标 checkpoint 的文件大小和 SHA-256，环境验证确认路径全部到位。
+- `eth0` 为 `UP / 192.168.123.18/24`；Orin 上的 CycloneDDS 成功订阅 LowState。
+- Tick 约每 0.5 秒增加 500，16 个关节和 IMU 数据连续有效，Ctrl+C 正常关闭。
+- 测试未启动 LowCmd 线程、未调用 `Write()`，没有发送任何电机指令。
+- 修正 `power_v` 被误标成电池 SOC 的问题，状态层现保留电压与电流的真实含义。
+- driver 阶段通过；下一步为完全离线的 policy 正确性和 CPU 时延验证。
+
+## 2026-09-03 Orin policy 与延时
+
+- go2w、go2wcr、go2wwmp 的 checkpoint 加载、输入输出和 MotorCommand 离线检查通过。
+- 为 go2w 推理补充 `torch.no_grad()`；动作数值回归不变，不再构建无用 autograd 图。
+- 新增统一 CPU 基准，测量观测构建、网络推理和 MotorCommand 转换的完整单帧。
+- 25W mode 3、单线程长测 2000 帧：go2w P99 `1.911 ms`，go2wcr P99
+  `3.967 ms`，均为零 20 ms deadline miss。
+- WMP 四线程 500 帧平均 `8.175 ms`，但每五帧的 world-model 更新平均 `31.009 ms`；
+  100/100 个更新帧超时，所以 WMP 尚未满足逐帧 50 Hz。
+- `setup.sh` 和 VS Code 默认固定 `OMP_NUM_THREADS=1`，为 go2w/go2wcr 保留 DDS 调度余量。
+
+## 2026-09-03 Xbox command input
+
+- Orin USB/udev 识别到 `BEITONG A1T2 BFM DONGLE`（VID/PID `20bc:504d`），对应
+  `/dev/input/js0`，稳定路径为 `/dev/input/by-id/usb-BEITONG_BEITONG_A1T2_BFM_DONGLE-joystick`。
+- 设备报告 8 个轴、16 个按键，当前用户有权限读取；默认 joystick 参数已改为稳定 by-id 路径。
+- `scripts/input/test_command_input.py` 通过；真实离线监视器能够打开设备，未按 A 时持续输出零速度。
+- 自动监视期间没有采集到用户移动事件；三个轴的实际方向随后由用户现场逐轴确认。
+- 本阶段没有初始化 DDS、LowCmd 或 Sport Mode。
+
+## 2026-09-03 Real-test 代码审查
+
+- 按用户已完成的仿真和 Xbox 验证结果，real test 保持三步：只读 LowState、固定站姿
+  LowCmd、固定站姿后接收 Xbox policy。
+- 保留键盘 `1`（StandUp）和 `2`（ReleaseMode 后接管）确认流程；没有把按键改成自动动作。
+- `DdsDriver.send_command()` 增加 16 路形状和 NaN/Inf 检查，异常时进入紧急阻尼；不做
+  关节限幅、动作平滑或网络输出修正。
+- Xbox 读取时把设备拔出类 `OSError` 转为已有 RuntimeError 退出路径；结束时仍统一进入
+  紧急阻尼。
+- 未启动 real test；本阶段没有发送 LowCmd 或调用 Sport Mode。
+
+## 2026-09-03 Sport Mode 恢复
+
+- 根据宇树 SDK2 的 Go2W 示例和 MotionSwitcher API，确认 Go2W 运动模式别名为 `ai-w`，
+  对应 `wheeled_sport(go2W)`。
+- `ai-w` 恢复已拆为 `scripts/real/select_wheeled_sport.py`；`stand_up()` 恢复为原始单一
+  `SportClient.StandUp()` 调用，先单独验证模式恢复，再验证站立。
+- 未增加关节站立轨迹、动作限幅或自动 LowCmd；恢复失败会停止流程，不发送 LowCmd。
+- 代码只完成静态审查和文档更新，未在机器人上调用该恢复流程。
+
+## 2026-09-04 Step 5 双进程迁移
+
+- `test_policy_real.py` 已迁移为 DDS 主进程 + go2w policy 子进程，复用 4.8 验证过的
+  `spawn + Pipe` 架构。
+- fixed、keyboard、Xbox、阶段按键、print-only、CSV 和退出阻尼路径均保留。
+- 子进程报告模型加载完成后，先以真实状态和零速度命令预热 3 秒；预热期间 LowCmd
+  保持固定站姿，不发送 policy action。
+- policy 默认 CPU 2、单线程、50 Hz；LowCmd 默认 CPU 1、500 Hz。policy 使用绝对
+  deadline，超期时不连续补跑旧周期。
+- 只完成语法和静态差异检查，未启动 DDS 或执行实机测试。
+- 修正预热语义：未发送的预热 action 不再写入 `last_action` 历史。
+- 实机 CSV 已扩展为完整状态/时序/action/MotorCommand，并自动生成独立的 265 维
+  observation CSV；新增纯离线 `replay_observation_csv.py` 供笔记本逐帧对比。

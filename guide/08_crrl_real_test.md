@@ -10,7 +10,7 @@
 ## 键盘/Xbox 实机入口
 
 ```bash
-cd /home/robot/sim2real_ws
+cd /home/unitree/sim2real
 source setup.sh robot
 python scripts/real/test_policy_go2wcr_real.py --control fixed --vx 0 --vy 0 --vyaw 0
 ```
@@ -19,7 +19,7 @@ python scripts/real/test_policy_go2wcr_real.py --control fixed --vx 0 --vy 0 --v
 
 ```bash
 python scripts/real/test_policy_go2wcr_real.py --control keyboard
-python scripts/real/test_policy_go2wcr_real.py --control xbox --joystick /dev/input/js0
+python scripts/real/test_policy_go2wcr_real.py --control xbox
 ```
 
 脚本的接管顺序与现有 go2w 入口一致：按 `1` 执行 StandUp；站稳并吊好后按 `2` 释放 Sport Mode；ReleaseMode 成功返回后立即发送固定 `INITIAL_JOINTS_POS` 首帧，再启动 500 Hz LowCmd 发布。模型加载期间保持固定站姿，加载后由 go2wcr 50 Hz 更新指令。
@@ -33,7 +33,7 @@ python scripts/real/test_policy_go2wcr_real.py --control xbox --joystick /dev/in
 先只读确认遥控器字段：
 
 ```bash
-python scripts/input/debug_unitree_remote.py --interface enp0s31f6 --raw
+python scripts/input/debug_unitree_remote.py --interface eth0 --raw
 ```
 
 确认后使用 CRRL 入口：

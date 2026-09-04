@@ -24,7 +24,9 @@ class RobotState:
     imu_rpy: np.ndarray = field(default_factory=lambda: np.zeros(3, dtype=np.float32))        # [roll,pitch,yaw]
     # 系统
     tick: int = 0
-    battery_soc: float = 0.0
+    received_monotonic_ns: int = 0
+    battery_voltage: float = 0.0
+    battery_current: float = 0.0
 
 
 @dataclass

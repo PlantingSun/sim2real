@@ -17,13 +17,13 @@ ssh unitree@192.168.123.18
 从笔记本复制一个文件到 Orin：
 
 ```bash
-scp /home/robot/sim2real_ws/README.md unitree@192.168.123.18:/home/unitree/
+scp ./README.md unitree@192.168.123.18:/home/unitree/sim2real/
 ```
 
 从 Orin 取回日志：
 
 ```bash
-scp unitree@192.168.123.18:/home/unitree/result.txt /home/robot/sim2real_ws/
+scp unitree@192.168.123.18:/home/unitree/sim2real/result.txt ./
 ```
 
 首次传输只使用明确的小文件和明确的目标目录。暂不使用带 `--delete` 的同步命令，也不要覆盖宇树预装目录。

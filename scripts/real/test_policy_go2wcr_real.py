@@ -25,7 +25,7 @@ def main() -> None:
     parser.add_argument("--vyaw", type=float, default=0.0)
     parser.add_argument("--model", default=model_path("go2wcr/model_1499.pt"))
     parser.add_argument("--interface", default=DDS.DEFAULT_NET_IF)
-    parser.add_argument("--joystick", default="/dev/input/js0")
+    parser.add_argument("--joystick", default=DDS.DEFAULT_JOYSTICK)
     parser.add_argument("--no-release", action="store_true", help="跳过 Sport Mode 释放")
     args = parser.parse_args()
 

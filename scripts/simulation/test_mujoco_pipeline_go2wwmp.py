@@ -5,6 +5,8 @@ import argparse
 import threading
 import time
 
+# Jetson 上先加载 PyTorch，避免 MuJoCo/OpenCV 的 OpenMP 占用 static TLS。
+import torch
 import mujoco
 import numpy as np
 
@@ -16,32 +18,14 @@ from policy.controller_go2wwmp import ControllerGo2wWMP
 
 
 DEFAULT_SCENE = str(GO2W_SCENE)
-DEFAULT_MODEL = model_path("go2wwmp/model_6000.pt")
+DEFAULT_MODEL = model_path("go2wwmp/model_1750.pt")
 TRAINED_CAMERA_POS = np.array([0.34, -0.0375, 0.09], dtype=np.float64)
 TRAINED_CAMERA_FOV_DEG = 58.0
 TRAINED_CAMERA_FORWARD = np.array(
     [np.cos(np.deg2rad(5.0)), 0.0, -np.sin(np.deg2rad(5.0))], dtype=np.float64
 )
 PRINT_FIRST_POLICY_FRAMES = 5
-
-
-def initialize_standing_pose(driver: MujocoDriver) -> None:
-    """在首次按空格启动前，把 MuJoCo 状态放到策略初始站姿。"""
-    if driver._joint_num != CTRL.NUM_ACTIONS:
-        raise RuntimeError(
-            f"MuJoCo actuator 数量错误: {driver._joint_num}, expected {CTRL.NUM_ACTIONS}"
-        )
-
-    stand_qpos = driver._model.key("stand").qpos
-    if not np.allclose(stand_qpos[-driver._joint_num :], CTRL.INITIAL_JOINTS_POS):
-        raise RuntimeError("XML stand keyframe 与 CTRL.INITIAL_JOINTS_POS 不一致")
-    driver._data.qpos[:] = stand_qpos
-    driver._data.qvel[:] = 0.0
-    driver._data.ctrl[:] = CTRL.INITIAL_JOINTS_POS
-    mujoco.mj_forward(driver._model, driver._data)
-    if driver._viewer is not None:
-        driver._viewer.sync()
-    print(f"[MujocoDriver] 初始站姿已加载: base_z={driver._data.qpos[2]:.3f} m")
+DEPTH_DISPLAY_INTERVAL = 5  # 50 Hz policy / 5 = approximately 10 Hz display
 
 
 def render_depth(renderer, driver: MujocoDriver, camera_id: int) -> np.ndarray:
@@ -137,33 +121,26 @@ def run_headless(
     frame_count: int,
 ) -> None:
     """无 viewer 运行真实 MuJoCo 深度渲染、WMP 和电机闭环。"""
-    driver = MujocoDriver(scene_path, data_hz=DDS.RATE_HZ)
-    driver._model = mujoco.MjModel.from_xml_path(scene_path)
-    driver._data = mujoco.MjData(driver._model)
-    driver._joint_num = driver._model.nu
-    initialize_standing_pose(driver)
+    driver = MujocoDriver(scene_path, data_hz=DDS.RATE_HZ, show_viewer=False)
+    if not driver.initialize():
+        raise RuntimeError("MuJoCo headless driver 初始化失败")
 
-    camera_id = driver._model.camera("depth_camera").id
-    validate_depth_camera(driver, camera_id)
-    renderer = mujoco.Renderer(driver._model, height=64, width=64)
-    renderer.enable_depth_rendering()
-    policy_dt = 1.0 / CTRL.POLICY_RATE_HZ
-    physics_steps = int(round(policy_dt / driver._model.opt.timestep))
-    if not np.isclose(physics_steps * driver._model.opt.timestep, policy_dt):
-        raise RuntimeError("MuJoCo timestep 无法精确组成 50 Hz policy 周期")
-
-    depth_m = None
+    renderer = None
     try:
+        driver.reset_to_stand()
+        camera_id = driver._model.camera("depth_camera").id
+        validate_depth_camera(driver, camera_id)
+        renderer = mujoco.Renderer(driver._model, height=64, width=64)
+        renderer.enable_depth_rendering()
+        policy_dt = 1.0 / CTRL.POLICY_RATE_HZ
+        physics_steps = int(round(policy_dt / driver._model.opt.timestep))
+        if not np.isclose(physics_steps * driver._model.opt.timestep, policy_dt):
+            raise RuntimeError("MuJoCo timestep 无法精确组成 50 Hz policy 周期")
+
+        depth_m = None
         for frame_index in range(frame_count):
             if controller.needs_depth_update:
                 depth_m = render_depth(renderer, driver, camera_id)
-                processed = controller.preprocess_depth(depth_m)
-                print(
-                    f"[DEPTH {frame_index + 1}] meters="
-                    f"[{depth_m.min():.3f}, {depth_m.max():.3f}], current_preprocessed="
-                    f"[{processed.min():.3f}, {processed.max():.3f}]"
-                )
-
             action, motor_command = controller.step(driver.get_state(), command, depth_m)
             driver._apply_command(motor_command)
             for _ in range(physics_steps):
@@ -176,7 +153,9 @@ def run_headless(
                     f"base_z={driver._data.qpos[2]:.3f} m"
                 )
     finally:
-        renderer.close()
+        if renderer is not None:
+            renderer.close()
+        driver.shutdown()
 
     if not np.isfinite(driver._data.qpos).all() or not np.isfinite(driver._data.qvel).all():
         raise RuntimeError("无窗口 MuJoCo 闭环产生 NaN 或 Inf")
@@ -233,7 +212,7 @@ def main() -> None:
     cv2_module = None
     quit_requested = False
     try:
-        initialize_standing_pose(driver)
+        driver.reset_to_stand()
         camera_id = driver._model.camera("depth_camera").id
         validate_depth_camera(driver, camera_id)
         renderer = mujoco.Renderer(driver._model, height=64, width=64)
@@ -276,6 +255,7 @@ def main() -> None:
                         if (
                             cv2_module is not None
                             and depth_updated
+                            and policy_count % DEPTH_DISPLAY_INTERVAL == 0
                             and not show_depth_image(cv2_module, depth_m, policy_count)
                         ):
                             quit_requested = True

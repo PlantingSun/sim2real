@@ -6,6 +6,8 @@ import threading
 import time
 from config.paths import GO2W_SCENE, model_path
 
+# Jetson 上先加载 PyTorch，避免 MuJoCo 的 OpenMP 占用 static TLS。
+import torch
 import mujoco
 import numpy as np
 
@@ -16,25 +18,6 @@ from policy.controller_go2wcr import ControllerGo2wCR
 
 DEFAULT_SCENE = str(GO2W_SCENE)
 PRINT_FIRST_POLICY_FRAMES = 5
-
-
-def initialize_standing_pose(driver: MujocoDriver) -> None:
-    """在首次按空格启动前，把 MuJoCo 状态放到策略初始站姿。"""
-    if driver._joint_num != CTRL.NUM_ACTIONS:
-        raise RuntimeError(
-            f"MuJoCo actuator 数量错误: {driver._joint_num}, "
-            f"expected {CTRL.NUM_ACTIONS}"
-        )
-
-    # XML 已定义 stand keyframe；恢复完整 keyframe 可同时修正 base 高度和关节角度。
-    stand_qpos = driver._model.key("stand").qpos
-    if not np.allclose(stand_qpos[-driver._joint_num:], CTRL.INITIAL_JOINTS_POS):
-        raise RuntimeError("XML stand keyframe 与 CTRL.INITIAL_JOINTS_POS 不一致")
-    driver._data.qpos[:] = stand_qpos
-    driver._data.qvel[:] = 0.0
-    mujoco.mj_forward(driver._model, driver._data)
-    driver._viewer.sync()
-    print(f"[MujocoDriver] 初始站姿已加载: base_z={driver._data.qpos[2]:.3f} m")
 
 
 def print_motor_command(command) -> None:
@@ -56,7 +39,15 @@ def main() -> None:
     parser.add_argument("--vx", type=float, default=0.0)
     parser.add_argument("--vy", type=float, default=0.0)
     parser.add_argument("--vyaw", type=float, default=0.0)
+    parser.add_argument("--auto-start", action="store_true")
+    parser.add_argument("--frames", type=int, default=0, help="达到该 policy 帧数后退出；0 表示持续运行")
     args = parser.parse_args()
+
+    command = np.array([args.vx, args.vy, args.vyaw], dtype=np.float32)
+    if np.any(np.abs(command) > CTRL.COMMAND_LIMITS):
+        parser.error(f"速度指令超过限制 {CTRL.COMMAND_LIMITS.tolist()}")
+    if args.frames < 0:
+        parser.error("frames 不能为负数")
 
     print("=== Step CRRL-2: go2wcr MuJoCo 全流程 ===")
     print(f"场景: {args.scene}")
@@ -65,11 +56,12 @@ def main() -> None:
     driver = MujocoDriver(args.scene, data_hz=DDS.RATE_HZ)
     if not driver.initialize():
         return
-    initialize_standing_pose(driver)
+    driver.reset_to_stand()
 
     controller = ControllerGo2wCR(args.model)
     controller.reset()
-    command = np.array([args.vx, args.vy, args.vyaw], dtype=np.float32)
+    if args.auto_start:
+        driver._pause = False
 
     sync_thread = threading.Thread(target=driver._sync_loop)
     sync_thread.start()
@@ -99,6 +91,8 @@ def main() -> None:
                         if policy_count <= PRINT_FIRST_POLICY_FRAMES:
                             print(f"\n[POLICY FRAME {policy_count}]")
                             print_motor_command(motor_command)
+                        if args.frames and policy_count >= args.frames:
+                            break
                 else:
                     mujoco.mj_forward(driver._model, driver._data)
 

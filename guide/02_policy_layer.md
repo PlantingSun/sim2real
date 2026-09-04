@@ -13,15 +13,13 @@ source setup.sh policy
 python -c "import torch; print(torch.__version__)"
 ```
 
-如未安装:
-```bash
-pip install torch --index-url https://download.pytorch.org/whl/cpu
-```
+依赖只按 `12_orin_environment.md` 安装到项目 `.venv`，不要向系统 Python 执行
+`pip install`。
 
 ### 2. 运行离线测试
 
 ```bash
-cd /home/robot/sim2real_ws
+cd /home/unitree/sim2real
 source setup.sh policy
 python scripts/policy/test_policy_offline.py
 ```
@@ -39,6 +37,21 @@ python scripts/policy/test_policy_offline.py
 - 网络加载成功（打印 Actor/Critic 结构）
 - 零状态推理无异常
 - 所有断言通过
+- Orin 上完整单帧推理 P99 不超过 20 ms（50 Hz）
+
+## Orin 延时验证
+
+统一基准入口会测量 `build_obs → compute_action → MotorCommand`，不初始化 DDS：
+
+```bash
+source setup.sh policy
+python scripts/policy/benchmark_policy_latency.py \
+  --policy go2w --threads 1 --warmup 100 --iterations 2000
+```
+
+2026-09-03 在 25W mode 3 下实测：mean `1.791 ms`，P99 `1.911 ms`，max
+`2.295 ms`，2000 帧没有超过 20 ms。详细方法和三种 policy 的结果见
+`13_orin_policy_benchmark.md`。
 
 ## 文件清单
 
@@ -50,3 +63,4 @@ python scripts/policy/test_policy_offline.py
 | `policy/controller_go2w.py` | 改写 | 去 ROS, 新增 build_obs/compute_action |
 | `models/go2w/model_700.pt` | 复制 | 策略权重 |
 | `scripts/policy/test_policy_offline.py` | 新建 | 离线验证 |
+| `scripts/policy/benchmark_policy_latency.py` | 新建 | Orin CPU 完整单帧延时基准 |

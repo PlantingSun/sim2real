@@ -1,8 +1,10 @@
-# CRRL / go2wcr 实机部署阶段计划
+# Go2W 机载 Orin NX 实机部署阶段计划
 
 ## Goal
 
-在保持现有 `driver` 层接口稳定的前提下，将 `/home/robot/simtosim/src` 中的 go2wcr/CRRL 和 go2wwmp 接入当前 sim2real 项目，复现并补齐 policy → simulation → real_test 的验证链路，整理 `scripts` 分类，补充准确、简洁、可人工审查的代码注释与分步 Markdown 文档，为最终部署实机做好准备。
+在 Go2W 背部的原生 Orin NX 上，用唯一、可复建的环境运行 go2w/go2wcr/go2wwmp，
+并严格按 driver → policy → simulation pipeline → command input → real test 顺序验证。
+所有实机代码保持简洁、注释准确、可逐行人工审查，每一步保留 Markdown 记录。
 
 ## Prompt
 
@@ -24,11 +26,18 @@
 - [in_progress] Phase 12: 从零建立 Go2W 机载 Orin NX 使用基础（转为本地图形桌面）
 - [completed] Phase 13: 根据现场设备事实规划联网与 Orin 本地使用（远程传图暂缓）
 - [completed] Phase 14: 精简 Orin NX 本地图形桌面入门文档
-- [completed] Phase 15: 移植并验证 Go2W WMP MuJoCo pipeline
+- [in_progress] Phase 15: 移植并验证 Go2W WMP MuJoCo pipeline
+- [completed] Phase 16: 内置 WMP 推理依赖修正
+- [completed] Phase 17: WMP 场景与模型路径基础修正
+- [completed] Phase 18: 项目可迁移化
+- [completed] Phase 19: 建立 Orin NX 专用 Python 3.8/.venv、CycloneDDS 和 VS Code 环境
+- [completed] Phase 20: Orin eth0 上只读验证 DDS driver
+- [completed] Phase 21: 离线验证三个 policy，并测量 Orin CPU 单帧延时
 
 ## Decisions
 
 - 现有 driver layer 作为稳定边界，优先复用，不主动修改其行为。
+- 当前仓库只服务机载 Orin NX：固定 Python 3.8 `.venv` 和 `eth0`，不保留笔记本兼容分支。
 - 先以当前仓库已有模型、配置和控制接口为事实依据；不能把“能导入”误判成“能上实机”。
 - 真实机器人测试入口默认必须显式确认/保护，验证阶段只做静态检查或仿真/离线运行。
 - 每个阶段的关键发现、变更和验证结果同步到 `findings.md` 与 `progress.md`。
@@ -49,13 +58,16 @@
 | 首次 RealSense/ROS2 资料检索请求语法错误 | 1 | 修正查询字符串后重新检索官方 RealSense wrapper 和 ROS2 文档 |
 | 宇树营销手册页面无法直接打开 | 1 | 使用搜索到的 Go2-W 手册副本和宇树官网产品页交叉核对；不把 NVIDIA 开发套件接口套用到 Go2W |
 | 宇树支持页正文无法由浏览工具展开 | 1 | 以用户现场按该官方教程成功验证的结果为设备事实，并保留官方链接；不推测未显示的细节 |
-| 系统 `/usr/bin/python3` 没有 MuJoCo | 1 | 使用项目既有 `unitree_py38` 环境继续执行渲染与 checkpoint 验证 |
-| 直接按文件路径运行 WMP 脚本时找不到 `config` | 1 | 按项目约定先 `source setup.sh policy` 设置项目 `PYTHONPATH` 后重跑；同时纳入入口易用性审查 |
-| zsh 校验循环使用保留变量 `path` 导致后续找不到 `git` | 1 | 改用任务专用变量名 `review_file`，不再覆盖 zsh 的 PATH 绑定 |
+| 系统缺少 `python3.8-venv` | 1 | 使用一次性 `virtualenv` 引导项目 `.venv`，不修改系统 Python |
+| CycloneDDS 0.10.2 `idlc` 出现未定义符号 | 1 | 清除 ROS Foxy 的 `LD_LIBRARY_PATH`，避免链接其 CycloneDDS 0.7 |
+| MuJoCo/OpenCV 后加载 PyTorch 时报 static TLS 错误 | 3 | 仿真入口固定先导入 PyTorch；移除全局双 `libgomp` 预加载 |
 
 ## Next Step
 
-当前以 Orin 本地图形桌面为后续相机工作主线；SSH、网络传图和远程显示仅保留为已验证的备用记录。go2wwmp 的模型/观测/动作适配和无窗口验证已完成；待在有图形环境的设备上运行实际 MuJoCo viewer，任何实机代码仍须经过用户审查。
+Orin NX 上 go2w/go2wcr 的离线功能和 50 Hz 延时门槛已经通过。WMP 功能通过，但每五帧
+一次的 world-model 更新超过 20 ms，暂不进入实机链路。go2w/go2wcr 的 simulation
+pipeline 已通过；当前进入 command input，完成手柄人工逐轴确认后再进入 real test。
+WMP 只保留后续 cv2 兼容性修复，不进入当前控制链路。
 
 ## Phase 9 Scope（历史记录）
 
@@ -112,7 +124,7 @@
 - 已完成 `policy/controller_go2wwmp.py` 和 `scripts/simulation/test_mujoco_pipeline_go2wwmp.py`。
 - 已完成 checkpoint 严格加载、CPU world model 构造、单步检查和 6 周期无窗口推理验证；已确认动作/观测维度与 simtosim 结构一致。
 - 已将共享 XML 相机和 WMP pipeline 统一到用户确认的 `[0.34, -0.0375, 0.09]`；不再保留旧场景位置对比入口。
-- 当前机器仍不能创建 GLFW viewer，但 Phase 19 已通过 EGL 真实深度渲染和 300 帧闭环完成 pipeline 验证；图形桌面 viewer 保留为人工视觉复核，不再阻塞 Phase 15。
+- 已记录当前机器缺少可用 GLFW/OpenGL context，实际窗口闭环待在 Orin 本地图形桌面上执行；因此 Phase 15 暂保留为 in_progress，未宣称 MuJoCo viewer 验证完成。
 
 ## Phase 16 — 内置 WMP 推理依赖修正（completed）
 
@@ -139,25 +151,43 @@
 
 结果：项目源码、Unitree SDK2 Python、Go2W MuJoCo MJCF/STL 和路径解析已内置；从 `/tmp` 启动的离线与 XML 检查通过。权重仍因 `.gitignore` 规则不进入 Git，目标设备需要另行复制本地 checkpoint。
 
-## Phase 19 — Go2WWMP simulation pipeline 深度链路复审（completed）
+## Phase 19 — Orin NX 专用环境（completed）
 
-- [x] 逐文件对照 simtosim 训练环境、MuJoCo 深度发布、ROS 控制器、WMP 网络与当前移植实现。
-- [x] 明确深度的物理单位、裁剪/归一化、无效值、图像方向、更新频率和时间对齐语义。
-- [x] 修复 `test_mujoco_pipeline_go2wwmp.py` 及必要的 controller/网络边界，并补充可自动验证的测试。
-- [x] 回归 checkpoint 加载、无窗口闭环、场景加载、静态检查与文档，列出仍需图形设备人工确认的事项。
+- [x] 核对 aarch64、Ubuntu 20.04.5、L4T R35.3.1、25W mode 3、Python 和 VS Code。
+- [x] 确定只使用系统 Python 3.8.10 派生的项目 `.venv`，不安装 Conda、不使用 Python 3.9。
+- [x] 安装并锁定 CPU-only PyTorch 2.0.0、NumPy 1.24.4、MuJoCo 3.2.3。
+- [x] 将 CycloneDDS C/Python 0.10.2 安装到 `.venv`，隔离 ROS Foxy 的 0.7 动态库。
+- [x] 增加可复建安装脚本、只读验证脚本、VS Code 配置和 `guide/12_orin_environment.md`。
 
-本阶段只改进 Go2WWMP 仿真与离线验证，不启动 DDS、LowCmd、Sport Mode 或真实机器人控制。
+结果：环境和无窗口 MuJoCo 场景验证通过，未初始化 DDS。该阶段结束时三个 `.pt` 文件尚未
+位于 controller 要求的精确路径，因此当时没有宣称 policy 可执行。
 
-结果：修复训练深度中心化、100 ms 深度延迟、连续五帧动作历史、yaw command 缩放、启动历史、
-观测/action 裁剪和 check-only 关节顺序；默认 `model_6000.pt` 已通过 6 项单元测试、严格加载、
-100 帧静止命令闭环和 `vx=0.6` 的 300 帧楼梯场景 EGL 闭环。viewer 的视觉姿态仍需在图形桌面人工确认。
+## Phase 20 — Orin DDS driver（completed）
 
-## Phase 20 — 5500/6000 checkpoint 与修复说明文档（completed）
+- [x] 静态确认测试入口不会启动 LowCmd 线程或调用 `Write()`。
+- [x] 确认 `eth0` 为 `192.168.123.18/24`，并在该接口初始化 CycloneDDS。
+- [x] 连续读取 LowState 的 Tick、16 个关节和 IMU 数据，Ctrl+C 正常关闭。
+- [x] 修正把 SDK `power_v` 当作 SOC 百分比的命名和显示错误。
 
-- [x] 分别严格加载 `model_5500.pt`、`model_6000.pt` 并运行短 MuJoCo 深度闭环。
-- [x] 写明米制深度、`-0.5` 偏移、encoder 二次减法、无效值与相机延迟的完整数值链路。
-- [x] 写明动作历史、观测缩放、Ctrl/DDS 顺序和相机参数等其他修复。
-- [x] 补充两个 checkpoint 的无窗口与 viewer 启动命令，以及实机前的人工对照标准。
+结果：Orin 直接作为 DDS 参与者能够稳定订阅机器人状态；本阶段没有发送 LowCmd。
 
-结果：两套 checkpoint 均兼容当前网络结构；6000 保持默认，5500 可通过 `--model` 显式选择。
-详细人工审查记录见 `guide/12_go2wwmp_pipeline_review.md`。
+## Phase 21 — Orin policy 与 CPU 延时（completed）
+
+- [x] 三个 checkpoint 均严格加载，观测、动作和 MotorCommand 维度/有限值检查通过。
+- [x] go2w 推理补上 `torch.no_grad()`，回归输出不变。
+- [x] 1/2/4/8 线程短测后，将 go2w/go2wcr 默认收敛为单个 OpenMP 线程。
+- [x] go2w/go2wcr 各执行 2000 个计时帧，P99 分别为 `1.911/3.967 ms`，零超时。
+- [x] WMP 使用 4 线程执行 500 帧；100 个 world-model 更新帧全部超过 20 ms。
+
+结果：go2w/go2wcr 满足当前 50 Hz policy 要求，可以进入仿真。WMP 不能仅凭平均吞吐判定
+通过，后续需要保持网络语义的推理优化和重新验证。本阶段没有初始化 DDS。
+
+## Phase 22 — Xbox command input（completed）
+
+- [x] 确认 Orin 的 USB/udev 设备身份、稳定 joystick 路径和访问权限。
+- [x] 运行输入映射单元测试，不初始化 DDS。
+- [x] 用真实设备启动离线监视器，确认节点可打开且未使能时速度为零。
+- [x] 按住 A 逐轴确认 `vx/vy/vyaw` 的方向、回中值和限幅。
+
+结果：当前接收器可读，默认路径已固定为本机 udev by-id 链接，手柄方向和回中行为已由
+用户现场确认。WMP 暂不进入当前控制链路，只保留后续 cv2 兼容性修复。

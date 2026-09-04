@@ -124,10 +124,14 @@ class ControllerGo2w:
         Returns:
             action: [16] 维原始动作（Ctrl 顺序），未经缩放
         """
-        obs_norm = self.obs_normalizer(obs)
-        obs_norm = torch.clip(obs_norm, -self.clip_obs, self.clip_obs)
-        action = self.actor_critic.actor(obs_norm.detach()).detach().flatten()
-        action = torch.clip(action, -self.clip_action, self.clip_action)
+        if obs.shape != (self.num_actor_obs * self.history_length,):
+            raise ValueError(f"obs 必须是 265 维，实际为 {tuple(obs.shape)}")
+
+        with torch.no_grad():
+            obs_norm = self.obs_normalizer(obs)
+            obs_norm = torch.clip(obs_norm, -self.clip_obs, self.clip_obs)
+            action = self.actor_critic.actor(obs_norm).flatten()
+            action = torch.clip(action, -self.clip_action, self.clip_action)
         self.last_action = action
         return action.numpy()
 

@@ -11,16 +11,14 @@
 
 ## 步骤
 
-### 1. 安装 MuJoCo (如未安装)
+### 1. 确认 Orin 环境
 
-```bash
-pip install mujoco
-```
+MuJoCo 由 `12_orin_environment.md` 固定安装到项目 `.venv`，不要单独升级。
 
 ### 2. 运行仿真
 
 ```bash
-cd /home/robot/sim2real_ws
+cd /home/unitree/sim2real
 source setup.sh mujoco
 
 # 零速站立测试

@@ -1,14 +1,18 @@
 #!/usr/bin/env python3
 # ============================================================================
-# test_policy_real.py — Step 4: 固定站姿接管 + policy 实机输出
+# test_policy_real.py — Step 5: 双进程 policy 实机控制
 #
 # Usage:
 #   source setup.sh robot
 #   python scripts/real/test_policy_real.py --control keyboard
-#   python scripts/real/test_policy_real.py --control xbox --joystick /dev/input/js0
+#   python scripts/real/test_policy_real.py --control xbox
 # ============================================================================
 
 import argparse
+import csv
+import multiprocessing as mp
+import os
+from pathlib import Path
 import signal
 import sys
 import termios
@@ -19,7 +23,7 @@ import numpy as np
 
 from driver.dds_driver import DdsDriver
 from driver.driver_base import MotorCommand
-from policy.controller_go2w import ControllerGo2w
+from policy.process_worker import run_go2w_policy
 from config.go2w_config import CTRL, DDS, DDS_IDX_FROM_CTRL
 from config.paths import model_path
 from teleop.command_source import (
@@ -89,6 +93,45 @@ def print_motor_command(title, positions, velocities, kp, kd) -> None:
     print("  kd      :", np.array2string(kd, precision=2, suppress_small=True))
 
 
+def open_log(path: str):
+    """打开完整状态日志和 observation 日志；未指定路径时不记录。"""
+    if not path:
+        return None, None, None, None
+    log_path = Path(path)
+    log_path.parent.mkdir(parents=True, exist_ok=True)
+    fields = ["time_s", "loop", "loop_dt_ms", "inference_ms", "ipc_ms", "state_age_ms",
+              "action_state_age_ms", "state_tick", "enabled", "warmup",
+              "cmd_vx", "cmd_vy", "cmd_vyaw"]
+    fields += [f"q_{i}" for i in range(16)]
+    fields += [f"dq_{i}" for i in range(16)]
+    fields += [f"tau_{i}" for i in range(16)]
+    fields += [f"imu_quat_{axis}" for axis in ("w", "x", "y", "z")]
+    fields += [f"imu_gyro_{axis}" for axis in ("x", "y", "z")]
+    fields += [f"imu_accel_{axis}" for axis in ("x", "y", "z")]
+    fields += [f"imu_rpy_{axis}" for axis in ("r", "p", "y")]
+    fields += ["battery_voltage", "battery_current"]
+    fields += [f"action_{i}" for i in range(16)]
+    fields += [f"p_{i}" for i in range(16)]
+    fields += [f"v_{i}" for i in range(16)]
+    fields += [f"kp_{i}" for i in range(16)]
+    fields += [f"kd_{i}" for i in range(16)]
+    handle = log_path.open("w", newline="")
+    writer = csv.writer(handle)
+    writer.writerow(fields)
+    handle.flush()
+    observation_path = log_path.with_name(f"{log_path.stem}_observation{log_path.suffix}")
+    observation_handle = observation_path.open("w", newline="")
+    observation_writer = csv.writer(observation_handle)
+    observation_fields = ["time_s", "loop", "warmup"]
+    observation_fields += [f"obs_{i}" for i in range(CTRL.NUM_OBS * CTRL.HISTORY_LENGTH)]
+    observation_fields += [f"action_{i}" for i in range(CTRL.NUM_ACTIONS)]
+    observation_writer.writerow(observation_fields)
+    observation_handle.flush()
+    print(f"[Log] 实时 CSV: {log_path}")
+    print(f"[Log] Observation CSV: {observation_path}")
+    return handle, writer, observation_handle, observation_writer
+
+
 def main():
     parser = argparse.ArgumentParser(description="Go2W 实物策略部署")
     parser.add_argument(
@@ -102,19 +145,34 @@ def main():
     parser.add_argument("--vyaw", type=float, default=0.0, help="转向速度 rad/s")
     parser.add_argument("--model", type=str, default=model_path("go2w/model_700.pt"))
     parser.add_argument("--interface", type=str, default=DDS.DEFAULT_NET_IF)
-    parser.add_argument("--joystick", type=str, default="/dev/input/js0")
+    parser.add_argument("--policy-cpus", type=str, default="2", help="policy 子进程 CPU 列表")
+    parser.add_argument("--lowcmd-cpu", type=int, default=1, help="500Hz LowCmd 线程绑定的 CPU")
+    parser.add_argument("--torch-threads", type=int, default=1, help="PyTorch intra-op 线程数")
+    parser.add_argument("--warmup", type=float, default=3.0, help="policy 预热秒数")
+    parser.add_argument("--rate", type=float, default=CTRL.POLICY_RATE_HZ, help="policy 频率")
+    parser.add_argument("--joystick", type=str, default=DDS.DEFAULT_JOYSTICK)
     parser.add_argument("--no-release", action="store_true", help="跳过 Sport Mode 释放")
+    parser.add_argument("--print-only", action="store_true", help="policy 只打印，不发送其 MotorCommand")
+    parser.add_argument("--log", type=str, default="", help="实时 CSV 路径（留空则不记录）")
     args = parser.parse_args()
+    if args.torch_threads < 1 or args.warmup < 0 or args.rate <= 0:
+        parser.error("torch-threads/rate 必须为正数，warmup 不能为负数")
+    policy_cpus = {int(value) for value in args.policy_cpus.split(",")} if args.policy_cpus else None
+    if policy_cpus and not policy_cpus.issubset(os.sched_getaffinity(0)):
+        parser.error(f"policy CPU 不可用: {sorted(policy_cpus)}")
 
     print(f"=== Go2W 实物部署 === control={args.control}")
 
     # 1. 初始化 DDS 通信；此时不会发布任何 LowCmd。
-    driver = DdsDriver(args.interface)
+    driver = DdsDriver(args.interface, lowcmd_cpu=args.lowcmd_cpu)
     if not driver.initialize():
         print("✗ 驱动初始化失败")
         return
 
     command_source = None
+    policy_process = None
+    policy_conn = None
+    log_handle, log_writer, observation_handle, observation_writer = open_log(args.log)
     lowcmd_started = False
     running = [True]
 
@@ -160,33 +218,83 @@ def main():
             initial_command.kd,
         )
 
-        # LowCmd 已由固定初始站姿接管；模型加载完成后由 policy 更新指令。
-        controller = ControllerGo2w(args.model)
-        controller.reset()
+        # policy 使用独立 Python 进程，避免与 500 Hz LowCmd 线程竞争 GIL。
+        context = mp.get_context("spawn")
+        policy_conn, child_conn = context.Pipe()
+        policy_process = context.Process(
+            target=run_go2w_policy,
+            args=(child_conn, args.model, policy_cpus, args.torch_threads),
+        )
+        policy_process.start()
+        child_conn.close()
+        if not policy_conn.poll(30.0):
+            raise RuntimeError("policy 子进程初始化超时")
+        if policy_conn.recv() != "ready":
+            raise RuntimeError("policy 子进程初始化失败")
         command_source = create_command_source(args)
 
-        period = 1.0 / CTRL.POLICY_RATE_HZ
-        print_every = max(1, CTRL.POLICY_RATE_HZ // 2)
+        period = 1.0 / args.rate
+        print_every = max(1, int(args.rate // 2))
         loop_count = 0
-        print(f"\n{CTRL.POLICY_RATE_HZ}Hz policy 实机控制（预测指令正在发送，Ctrl+C 退出）...")
+        active_count = 0
+        next_deadline = time.perf_counter()
+        warmup_end = next_deadline + args.warmup
+        rate_start = warmup_end
+        print(f"[WARMUP] {args.warmup:.1f}s，保持 INITIAL_JOINTS_POS，不发送 policy action")
+        print(f"\n{args.rate:g}Hz 双进程 policy 实机控制（Ctrl+C 退出）...")
 
         while running[0]:
             t0 = time.perf_counter()
             if driver.emergency:
-                print("[!!] 紧急阻尼中")
-                time.sleep(0.5)
-                continue
+                print("[!!] 紧急阻尼中，结束控制循环")
+                break
 
             command = command_source.read()
             if command.quit_requested:
                 break
             state = driver.get_state()
-            obs = controller.build_obs(state, command.velocity)
-            action = controller.compute_action(obs)
-            p, v, kp, kd = controller.action_to_motor_command(action)
-            driver.send_command(MotorCommand(positions=p, velocities=v, kp=kp, kd=kd))
+            warmup = time.perf_counter() < warmup_end
+            command_velocity = np.zeros(3, dtype=np.float32) if warmup else command.velocity
+            state_age_ms = (
+                (time.perf_counter_ns() - state.received_monotonic_ns) / 1.0e6
+                if state.received_monotonic_ns else -1.0
+            )
+            ipc_start = time.perf_counter()
+            policy_conn.send((state.joint_positions, state.joint_velocities,
+                              state.imu_quat, state.imu_gyro, command_velocity,
+                              warmup or args.print_only))
+            p, v, kp, kd, action, observation, inference_ms = policy_conn.recv()
+            ipc_ms = (time.perf_counter() - ipc_start) * 1000.0
+            action_state_age_ms = (
+                (time.perf_counter_ns() - state.received_monotonic_ns) / 1.0e6
+                if state.received_monotonic_ns else -1.0
+            )
+            if not warmup and not args.print_only:
+                driver.send_command(MotorCommand(positions=p, velocities=v, kp=kp, kd=kd))
             loop_count += 1
-            if loop_count % print_every == 0:
+            if not warmup:
+                active_count += 1
+            if log_writer is not None and log_handle is not None:
+                timestamp = time.time()
+                log_writer.writerow(
+                    [timestamp, loop_count, (time.perf_counter() - t0) * 1000.0,
+                     inference_ms, ipc_ms, state_age_ms, action_state_age_ms, state.tick,
+                     int(command.enabled), int(warmup), *command_velocity, *state.joint_positions,
+                     *state.joint_velocities, *state.joint_torques, *state.imu_quat,
+                     *state.imu_gyro, *state.imu_accel, *state.imu_rpy,
+                     state.battery_voltage, state.battery_current, *action, *p, *v, *kp, *kd]
+                )
+                log_handle.flush()
+                if observation_writer is not None and observation_handle is not None:
+                    observation_writer.writerow(
+                        [timestamp, loop_count, int(warmup), *observation, *action]
+                    )
+                    observation_handle.flush()
+            if not warmup and active_count % print_every == 0:
+                rate_elapsed = time.perf_counter() - rate_start
+                rate_hz = print_every / rate_elapsed if rate_elapsed > 0 else 0.0
+                rate_start = time.perf_counter()
+                print(f"[RATE] policy={rate_hz:.2f} Hz")
                 print(
                     "\n[COMMAND SOURCE] "
                     f"enabled={command.enabled}  "
@@ -194,23 +302,48 @@ def main():
                     f"vy={command.velocity[1]:+.3f}  "
                     f"vyaw={command.velocity[2]:+.3f}"
                 )
+                if args.print_only:
+                    print(f"[PRINT ONLY] policy action 未发送，inference={inference_ms:.3f} ms")
+                action_status = "未发送" if args.print_only else "正在发送"
                 print_motor_command(
-                    "[POLICY ACTIVE] 预测 MotorCommand（正在发送）",
+                    f"[POLICY ACTIVE] 预测 MotorCommand（{action_status}）",
                     p,
                     v,
                     kp,
                     kd,
                 )
-            dt = time.perf_counter() - t0
-            if dt < period:
-                time.sleep(period - dt)
+            next_deadline += period
+            remaining = next_deadline - time.perf_counter()
+            if remaining > 0:
+                time.sleep(remaining)
+            else:
+                # 超期后从当前时刻重新计时，禁止连续补跑旧周期。
+                next_deadline = time.perf_counter()
     except KeyboardInterrupt:
         pass
     except RuntimeError as exc:
         print(f"\n✗ 控制输入中断: {exc}")
+    except (EOFError, BrokenPipeError) as exc:
+        print(f"\n✗ policy 子进程通信中断: {exc}")
     finally:
         if command_source is not None:
             command_source.close()
+        if log_handle is not None:
+            log_handle.close()
+        if observation_handle is not None:
+            observation_handle.close()
+        if policy_process is not None:
+            if policy_process.is_alive() and policy_conn is not None:
+                try:
+                    policy_conn.send(None)
+                except (BrokenPipeError, EOFError):
+                    pass
+                policy_process.join(timeout=1.0)
+            if policy_process.is_alive():
+                policy_process.terminate()
+                policy_process.join(timeout=1.0)
+        if policy_conn is not None:
+            policy_conn.close()
         if lowcmd_started:
             driver.set_emergency_damping()
             time.sleep(0.1)

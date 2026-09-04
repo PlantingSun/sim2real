@@ -26,7 +26,7 @@ CRRL Actor 每次调用只预测一个残差动作。控制器按 stage 0、1、
 ## 执行
 
 ```bash
-cd /home/robot/sim2real_ws
+cd /home/unitree/sim2real
 source setup.sh policy
 python scripts/policy/test_policy_go2wcr_offline.py
 ```
@@ -43,7 +43,12 @@ python scripts/policy/test_policy_go2wcr_offline.py --model models/go2wcr/model_
 - 课程嵌入形状为 `(4, 4)`，正余弦值有限。
 - 初始站立零运动状态得到 265 维观测和 16 维有限动作。
 - `MotorCommand` 为 DDS 顺序；腿关节为位置环，轮子为速度环。
+- Orin 上完整四 stage 单帧推理 P99 不超过 20 ms（50 Hz）。
 - 没有导入 DDS、没有创建 publisher、没有发送机器人指令。
+
+2026-09-03 在 25W mode 3、单个 PyTorch CPU 线程下执行 2000 帧：mean
+`3.683 ms`，P99 `3.967 ms`，max `4.246 ms`，没有超过 20 ms。完整命令与测量边界见
+`13_orin_policy_benchmark.md`。
 
 ## 人工复核点
 

@@ -4,13 +4,14 @@
 import argparse
 import time
 
+from config.go2w_config import DDS
 from teleop.command_source import KeyboardCommandSource, XboxCommandSource
 
 
 def main():
     parser = argparse.ArgumentParser(description="offline keyboard/Xbox command monitor")
     parser.add_argument("--control", choices=("keyboard", "xbox"), default="keyboard")
-    parser.add_argument("--joystick", default="/dev/input/js0")
+    parser.add_argument("--joystick", default=DDS.DEFAULT_JOYSTICK)
     parser.add_argument("--hz", type=float, default=20.0)
     args = parser.parse_args()
     if args.hz <= 0.0:

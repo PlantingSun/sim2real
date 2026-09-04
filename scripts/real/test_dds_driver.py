@@ -13,10 +13,8 @@
 import sys
 import time
 import signal
-import numpy as np
 
 from driver.dds_driver import DdsDriver
-from driver.driver_base import MotorCommand
 from config.go2w_config import DDS
 
 
@@ -44,8 +42,12 @@ def main():
         while running:
             state = driver.get_state()
 
-            # 电池
-            print(f"Tick: {state.tick}  |  电池: {state.battery_soc:.1f}%")
+            # SDK 的 power_v / power_a 是电压和电流，不是电量百分比。
+            print(
+                f"Tick: {state.tick}  |  "
+                f"电池: {state.battery_voltage:.1f} V, "
+                f"{state.battery_current:.1f} A"
+            )
 
             # IMU RPY
             r, p, y = state.imu_rpy

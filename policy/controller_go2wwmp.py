@@ -287,7 +287,8 @@ class ControllerGo2wWMP:
         )
         self.last_action = action.clone()
         self.counter += 1
-        return action.numpy(), self.action_to_motor_command(action.numpy())
+        action_numpy = action.numpy()
+        return action_numpy, self.action_to_motor_command(action_numpy)
 
     def action_to_motor_command(self, action: np.ndarray) -> MotorCommand:
         """按 simtosim 缩放动作，并转换为当前 driver 使用的 DDS 顺序。"""

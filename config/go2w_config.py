@@ -70,7 +70,8 @@ class DDS:
     """Unitree SDK2/CycloneDDS 通信和实物侧参数。"""
 
     DOMAIN_ID = 0
-    DEFAULT_NET_IF = "enp0s31f6"
+    DEFAULT_NET_IF = "eth0"
+    DEFAULT_JOYSTICK = "/dev/input/by-id/usb-BEITONG_BEITONG_A1T2_BFM_DONGLE-joystick"
     LOWCMD_TOPIC = "rt/lowcmd"
     LOWSTATE_TOPIC = "rt/lowstate"
     RATE_HZ = 500

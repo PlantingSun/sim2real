@@ -19,9 +19,10 @@ from config.go2w_config import CTRL, CTRL_IDX_FROM_DDS, DDS_IDX_FROM_CTRL
 class MujocoDriver(DriverBase):
     """MuJoCo 仿真驱动，对外接口与 DdsDriver 一致（DDS 顺序）。"""
 
-    def __init__(self, xml_path: str, data_hz: int = 500):
+    def __init__(self, xml_path: str, data_hz: int = 500, show_viewer: bool = True):
         self._xml_path = xml_path
         self._data_hz = data_hz
+        self._show_viewer = show_viewer
 
         self._model = None
         self._data = None
@@ -45,25 +46,45 @@ class MujocoDriver(DriverBase):
         # 初始站立姿态
         self._data.ctrl[:] = CTRL.INITIAL_JOINTS_POS
 
-        # Viewer
-        self._viewer = mujoco.viewer.launch_passive(
-            self._model, self._data,
-            show_left_ui=True, show_right_ui=True,
-            key_callback=self._key_callback,
-        )
-        mujoco.mjv_defaultCamera(self._viewer.cam)
-        self._viewer.cam.type = mujoco.mjtCamera.mjCAMERA_TRACKING
-        try:
-            self._viewer.cam.trackbodyid = self._model.body("base_link").id
-        except Exception:
-            self._viewer.cam.trackbodyid = self._model.body("base").id
+        if self._show_viewer:
+            self._viewer = mujoco.viewer.launch_passive(
+                self._model, self._data,
+                show_left_ui=True, show_right_ui=True,
+                key_callback=self._key_callback,
+            )
+            mujoco.mjv_defaultCamera(self._viewer.cam)
+            self._viewer.cam.type = mujoco.mjtCamera.mjCAMERA_TRACKING
+            try:
+                self._viewer.cam.trackbodyid = self._model.body("base_link").id
+            except Exception:
+                self._viewer.cam.trackbodyid = self._model.body("base").id
 
         mujoco.mj_forward(self._model, self._data)
-        self._viewer.sync()
+        if self._viewer is not None:
+            self._viewer.sync()
 
-        print(f"[MujocoDriver] 关节数: {self._joint_num}")
+        mode = "viewer" if self._show_viewer else "headless"
+        print(f"[MujocoDriver] 关节数: {self._joint_num}, 模式: {mode}")
         self._running = True
         return True
+
+    def reset_to_stand(self) -> None:
+        """恢复 XML stand keyframe，并同步初始关节控制目标。"""
+        if self._joint_num != CTRL.NUM_ACTIONS:
+            raise RuntimeError(
+                f"MuJoCo actuator 数量错误: {self._joint_num}, "
+                f"expected {CTRL.NUM_ACTIONS}"
+            )
+
+        keyframe = self._model.key("stand")
+        if not np.allclose(keyframe.qpos[-self._joint_num:], CTRL.INITIAL_JOINTS_POS):
+            raise RuntimeError("XML stand keyframe 与 CTRL.INITIAL_JOINTS_POS 不一致")
+        mujoco.mj_resetDataKeyframe(self._model, self._data, keyframe.id)
+        self._data.ctrl[:] = CTRL.INITIAL_JOINTS_POS
+        mujoco.mj_forward(self._model, self._data)
+        if self._viewer is not None:
+            self._viewer.sync()
+        print(f"[MujocoDriver] 初始站姿已加载: base_z={self._data.qpos[2]:.3f} m")
 
     def get_state(self) -> RobotState:
         # 读取 Ctrl 顺序数据，重映射到 DDS 顺序
@@ -77,6 +98,8 @@ class MujocoDriver(DriverBase):
         state = RobotState()
         state.joint_positions = jpos_dds.astype(np.float32)
         state.joint_velocities = jvel_dds.astype(np.float32)
+        torques = self._data.qfrc_actuator[-self._joint_num:].copy()
+        state.joint_torques = torques[DDS_IDX_FROM_CTRL].astype(np.float32)
 
         # IMU
         quat = self._data.sensor("BodyQuat").data.copy()  # [w,x,y,z]
@@ -85,6 +108,15 @@ class MujocoDriver(DriverBase):
         state.imu_quat = np.array([quat[0], quat[1], quat[2], quat[3]], dtype=np.float32)
         state.imu_gyro = gyro.astype(np.float32)
         state.imu_accel = acc.astype(np.float32)
+        w, x, y, z = state.imu_quat
+        state.imu_rpy = np.array(
+            [
+                np.arctan2(2.0 * (w * x + y * z), 1.0 - 2.0 * (x * x + y * y)),
+                np.arcsin(np.clip(2.0 * (w * y - z * x), -1.0, 1.0)),
+                np.arctan2(2.0 * (w * z + x * y), 1.0 - 2.0 * (y * y + z * z)),
+            ],
+            dtype=np.float32,
+        )
 
         return state
 
@@ -104,6 +136,8 @@ class MujocoDriver(DriverBase):
 
     def simulate(self):
         """主仿真循环（阻塞）。"""
+        if self._viewer is None:
+            raise RuntimeError("headless 模式不使用交互式 simulate()")
         thread = threading.Thread(target=self._sync_loop)
         thread.start()
 
@@ -152,6 +186,8 @@ class MujocoDriver(DriverBase):
             print(f"[MujocoDriver] {'暂停' if self._pause else '运行'}")
 
     def _sync_loop(self):
+        if self._viewer is None:
+            return
         while self._viewer.is_running():
             self._viewer.sync()
             time.sleep(0.01)

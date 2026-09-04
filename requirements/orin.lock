@@ -1,0 +1,25 @@
+# Orin NX / Ubuntu 20.04 / Python 3.8 的项目内依赖锁。
+# OpenCV 4.2.0、PyYAML 5.3.1 和 PyOpenGL 3.1.0 复用 JetPack 系统包，
+# 因此不在这里重复安装。
+Jinja2==3.1.6
+MarkupSafe==2.1.5
+Pygments==2.19.2
+absl-py==2.3.1
+click==8.1.8
+cyclonedds==0.10.2
+etils==1.3.0
+filelock==3.16.1
+glfw==2.10.2
+importlib_resources==6.4.5
+markdown-it-py==3.0.0
+mdurl==0.1.2
+mpmath==1.3.0
+mujoco==3.2.3
+networkx==3.1
+numpy==1.24.4
+rich-click==1.9.8
+rich==14.3.4
+sympy==1.13.3
+torch==2.0.0
+typing_extensions==4.13.2
+zipp==3.20.2

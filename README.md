@@ -1,4 +1,4 @@
-# sim2real_ws — Go2W Sim-to-Real 部署
+# sim2real — Go2W 机载 Orin NX Sim-to-Real 部署
 
 Unitree Go2W 机器人 sim-to-real 控制系统。不使用 ROS/ROS2，纯 Python + PyTorch。
 
@@ -17,9 +17,10 @@ third_party/    项目内 Unitree SDK2 Python 源码
 ## 快速开始
 
 ```bash
-cd /home/robot/sim2real_ws
+cd /home/unitree/sim2real
 source setup.sh policy
 python scripts/policy/test_policy_offline.py
+python scripts/policy/benchmark_policy_latency.py --policy go2w --threads 1
 
 # MuJoCo（不需要 ROS2，也不会连接机器人）
 source setup.sh mujoco
@@ -31,7 +32,7 @@ MUJOCO_GL=egl python scripts/simulation/test_mujoco_pipeline_go2wwmp.py --headle
 source setup.sh robot
 python scripts/real/test_dds_driver.py
 python scripts/real/test_policy_real.py --control keyboard
-python scripts/real/test_policy_real.py --control xbox --joystick /dev/input/js0
+python scripts/real/test_policy_real.py --control xbox
 python scripts/real/test_policy_unitree_remote.py
 ```
 
@@ -52,17 +53,18 @@ go2wwmp 的网络、深度输入和 MuJoCo pipeline 验证见
 本轮深度公式、5500/6000 选择、时序 bug 和验证结果详见
 [`guide/12_go2wwmp_pipeline_review.md`](guide/12_go2wwmp_pipeline_review.md)。
 
-## 依赖
+## Orin NX 环境
 
-- Python 3.8+ (conda unitree_py38)
-- PyTorch (CPU)
-- PyYAML（仅 go2wwmp world model 配置读取）
-- OpenCV/cv2（仅 go2wwmp 深度画面显示）
-- unitree_sdk2py + CycloneDDS 0.10.x
-- MuJoCo 3.1.0+ (仅仿真)
+- 项目内 `.venv`，基于系统 Python 3.8.10；不使用 Conda 或 Python 3.9
+- PyTorch 2.0.0 CPU-only、NumPy 1.24.4、MuJoCo 3.2.3
+- 项目内 Unitree SDK2 Python + CycloneDDS 0.10.2
+- 复用 JetPack 系统 OpenCV 4.2.0 和 PyYAML 5.3.1
 
-Unitree SDK2 Python 源码和 CRC 本地库已随项目提供；CycloneDDS、Python、NumPy、
-PyTorch、OpenCV 和 MuJoCo 仍属于目标设备上的运行环境依赖，需要按设备架构安装。
+安装、环境复建、VS Code 和验证步骤见
+[`guide/12_orin_environment.md`](guide/12_orin_environment.md)。`setup.sh` 已固定为
+Orin NX 专用入口，并隔离系统全局 ROS Foxy 的 Python 和 CycloneDDS 0.7 路径。
+go2w/go2wcr 已在 25W 模式通过 50 Hz CPU 延时门槛；WMP 的周期性 world-model 帧仍超时。
+完整数据见 [`guide/13_orin_policy_benchmark.md`](guide/13_orin_policy_benchmark.md)。
 
 迁移说明：项目内的 MuJoCo 资源位于 `assets/go2w_description`，Unitree SDK2 Python
 源码位于 `third_party/unitree_sdk2_python`。策略权重因体积被 `.gitignore` 忽略，迁移时
@@ -74,7 +76,7 @@ D435i 在 Orin NX 本地图形桌面采集和显示的只读流程见
 [`guide/10_realsense_network_view.md`](guide/10_realsense_network_view.md)。该流程不接入机器人控制。
 
 如果还没有使用过机载 Orin NX，请先阅读
-[`orin_nx_onboarding/README.md`](orin_nx_onboarding/README.md)，从硬件连接、登录和文件传输开始。
+[`orin_nx_onboarding/README.md`](orin_nx_onboarding/README.md)，从硬件连接和登录开始。
 
 当前架构、接管顺序和安全边界见
 [`guide/00_overview.md`](guide/00_overview.md)。

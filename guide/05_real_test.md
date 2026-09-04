@@ -1,105 +1,223 @@
-# Step 5: 实机测试
+# Step 5：Go2W 实机测试
 
-固定位置环和零速 policy 已由 `scripts/real/test_policy_real.py` 验证。宇树原装
-遥控器入口为 `scripts/real/test_policy_unitree_remote.py`。
+本阶段使用 `scripts/real/test_policy_real.py`。该入口在一条命令中启动两个进程：
 
-## 前置条件
+- 主进程：DDS 通信和 500 Hz LowCmd 发送。
+- policy 子进程：50 Hz 网络推理，默认绑定 CPU 2，PyTorch 使用 1 个线程。
 
-- Step 1–4 全部通过。
-- 网线连接机器人，主机 IP 为 `192.168.123.99/24`。
-- 机器人周围无障碍，架子或吊绳已经准备好。
-- StandUp 完成前，吊具不能妨碍机器人正常站立。
-- `DDS.JOINT_LIMITS` 中的 `None` 表示对应限位尚未启用，必须清楚当前保护边界。
+当前先完成普通 Go2W policy 的实机验证。宇树原装遥控器和最终通过标准保留在文档后部，
+暂不进行。
 
-## 每次启动的接管顺序
+## 一、每次测试前的准备
+
+进入项目并加载机器人环境：
 
 ```bash
-cd /home/robot/sim2real_ws
+cd /home/unitree/sim2real
 source setup.sh robot
 ```
 
-先确认状态接收正常：
+确认以下条件：
+
+- Orin NX 通过 `eth0` 连接机器人。
+- 机器人周围无障碍，急停和吊绳可立即使用。
+- 按 `1` 执行 StandUp 时，机器人必须在地面上。
+- 机器人完全站稳后再吊起，最后才能按 `2` 释放 Sport Mode。
+- 执行过 `ReleaseMode()` 或程序进入阻尼后，下次测试前必须先恢复 `ai-w`。
+
+恢复 `ai-w` 的命令如下。它只切换模式，不发送 LowCmd：
+
+```bash
+python scripts/real/select_wheeled_sport.py
+```
+
+看到下面的信息才表示恢复成功：
+
+```text
+[MotionSwitcher] Go2W 模式已就绪: ai-w
+```
+
+## 二、正常启动和调试流程
+
+### 2.1 只检查 DDS 状态，不发送任何 LowCmd
+
+机器人保持正常模式，运行：
 
 ```bash
 python scripts/real/test_dds_driver.py
 ```
 
-Ctrl+C 退出状态检查后再启动实机策略。脚本使用单键确认，不需要按 Enter：
+确认以下数据持续刷新且数值合理：
 
-1. 按 `1`：只调用 Sport Mode 的 `StandUp()`，不发送 LowCmd。
-2. 机器人完全站稳后，将机器人固定到架子或吊绳上。
-3. 按 `2`：调用一次 `ReleaseMode()`；返回成功后立即同步发送固定
-   `INITIAL_JOINTS_POS`，随后启动 500 Hz LowCmd 线程。
-4. 模型加载完成后，50 Hz policy 开始更新实际发送的 MotorCommand。
+- `Tick` 持续增加。
+- 16 个关节的位置和速度正常。
+- IMU 四元数、角速度和加速度正常。
+- 没有 NaN、Inf 或明显不连续的跳变。
 
-按 `2` 前按 `q` 可以退出且不会发送 LowCmd。LowCmd 已启动后，Ctrl+C 或正常退出
-会进入紧急阻尼。
+按 Ctrl+C 退出。此脚本不会调用 `ReleaseMode()`，也不会发送 LowCmd。
 
-## 阶段一：固定位置环接管并核对输出
+### 2.2 只验证双进程和 50 Hz，不发送 policy 动作
 
-保持吊绳保护，使用零速度 fixed 输入：
+只有需要检查频率、预热或进程通信时才运行：
 
 ```bash
-python scripts/real/test_policy_real.py --control fixed --vx 0 --vy 0 --vyaw 0
+python scripts/real/test_policy_real.py \
+  --control fixed --vx 0 --vy 0 --vyaw 0 \
+  --print-only
 ```
 
-按上述顺序操作 `1`、吊起、`2`。重点检查：
+操作顺序：
 
-- `[Handoff]` 显示 ReleaseMode 返回到首条 LowCmd Write 完成的耗时。
-- `[LOWCMD ACTIVE]` 显示的固定位置是 `INITIAL_JOINTS_POS` 的 DDS 顺序。
-- 第一条 LowCmd 不是零命令、stop 值或阻尼命令。
-- 接管瞬间没有明显蹦跳、持续抖动或异常关节角度。
+1. 机器人在地面时按 `1`，执行 StandUp。
+2. 确认机器人完全站稳。
+3. 将机器人吊起并确认吊具可靠。
+4. 按 `2`，释放 Sport Mode 并启动 500 Hz 固定站姿 LowCmd。
+5. 等待 3 秒预热结束，观察 `[RATE] policy` 是否稳定在约 50 Hz。
+6. 按 Ctrl+C 退出，程序进入紧急阻尼。
 
-当前脚本不会长期暂停在固定位置环：模型加载期间保持固定位置，模型加载完成后会
-自动进入下一阶段。
+注意：`--print-only` 只表示“不发送 policy 预测动作”。按 `2` 后仍会发送固定的
+`INITIAL_JOINTS_POS`，因此也必须完成站立和吊起流程。
 
-## 阶段二：依靠网络零速站立
+### 2.3 正常启动零速度 policy
 
-出现以下提示后，policy 已经实际控制机器人：
+正式发送 policy 动作时运行：
 
-```text
-[POLICY ACTIVE] 预测 MotorCommand（正在发送）
+```bash
+python scripts/real/test_policy_real.py \
+  --control fixed --vx 0 --vy 0 --vyaw 0
 ```
 
-保持 `vx=vy=vyaw=0`，至少观察 60 秒：
+仍然严格按照 `1 → 站稳 → 吊起 → 2` 的顺序操作：
 
-- `[COMMAND SOURCE]` 应持续显示三个速度为零。
-- 机器人能够依靠 policy 保持站立。
-- 允许记录轻微可接受抖动，但不能出现逐渐放大的振荡。
-- IMU、关节输出和 policy MotorCommand 不应出现 NaN/Inf 或突变。
-- 500 Hz 线程持续发送最新 policy 指令，没有触发安全限位或紧急阻尼。
+1. 按 `1`：Sport Mode 执行 StandUp，此时没有 LowCmd。
+2. 机器人站稳后吊起。
+3. 按 `2`：执行一次 `ReleaseMode()`，随后立即启动固定站姿 LowCmd。
+4. policy 加载并预热 3 秒。预热期间网络会计算，但不会发送预测动作。
+5. 出现 `[POLICY ACTIVE]` 后，policy 开始以约 50 Hz 更新动作；LowCmd 始终以
+   500 Hz 重复发送最新命令。
+6. 观察机器人零速度站立状态，按 Ctrl+C 退出并进入阻尼。
 
-这一阶段通过后退出程序，再单独启动 Xbox 测试。
+预热阶段的 `last_action` 始终为 16 维零向量。机器人实际收到的是固定
+`INITIAL_JOINTS_POS`；对于当前控制器，零 action 映射后的目标与该固定站姿一致。
 
-## 阶段三：使用宇树原装遥控器
+### 2.4 使用 Xbox 手柄
 
-先通过机载默认服务让机器人站立，再将机器人固定到吊架。新脚本不会调用 StandUp，
-也不读取键盘或 Xbox：
+零速度 policy 验证完成后运行：
+
+```bash
+python scripts/real/test_policy_real.py --control xbox
+```
+
+同样按照 `1 → 站稳 → 吊起 → 2` 接管。A 未按下时速度命令为零；按住 A 后才接收摇杆
+命令。先小幅测试一个方向，松开 A 后确认速度立即归零，Back 或 Ctrl+C 退出。
+
+Xbox 映射：左摇杆纵轴为 `vx`，左摇杆横轴为 `vy`，右摇杆横轴为 `vyaw`，A 为
+deadman，Back 为退出。不要直接推满摇杆。
+
+## 三、当前需要执行的测试：完整日志和 observation
+
+当前任务是发送真实 policy 动作，同时记录 Orin NX 上的完整闭环数据。不要添加
+`--print-only`。
+
+### 3.1 启动前
+
+如果上一次程序已经按 `2` 接管，或者机器人当前处于阻尼模式，先恢复 `ai-w`：
+
+```bash
+python scripts/real/select_wheeled_sport.py
+```
+
+然后重新确认 DDS 状态：
+
+```bash
+python scripts/real/test_dds_driver.py
+```
+
+确认正常后按 Ctrl+C 退出状态检查。
+
+### 3.2 运行并保存日志
+
+保持吊绳保护，运行：
+
+```bash
+python scripts/real/test_policy_real.py \
+  --control fixed --vx 0 --vy 0 --vyaw 0 \
+  --log logs/real/policy_mp.csv
+```
+
+按以下顺序操作：
+
+1. 机器人在地面时按 `1`。
+2. 等待 StandUp 完成并确认机器人站稳。
+3. 吊起机器人。
+4. 按 `2` 启动接管。
+5. 等待 3 秒预热和 policy 频率稳定。
+6. 先记录一段无扰动站立数据，再进行数次轻微、可控的扰动。
+7. 数据足够后按 Ctrl+C，程序进入阻尼并关闭。
+
+该命令会生成两份文件：
+
+- `logs/real/policy_mp.csv`：状态年龄、循环/IPC/推理耗时、命令、完整 LowState、
+  raw action 和发送的 `p/v/kp/kd`。
+- `logs/real/policy_mp_observation.csv`：每帧 265 维 observation 和对应的 16 维
+  raw action，用于跨计算机复现推理。
+
+两份日志都会逐行 flush。记录会带来少量磁盘开销，正常运行时不加 `--log` 即可关闭。
+
+### 3.3 在 Orin NX 上离线复现
+
+实机测试结束后，该命令只读取 CSV 和模型，不连接机器人：
+
+```bash
+python scripts/policy/replay_observation_csv.py \
+  logs/real/policy_mp_observation.csv \
+  --model models/go2w/model_700.pt --threads 1
+```
+
+记录输出的 `mean_error` 和 `max_error`。
+
+### 3.4 复制到笔记本后对比
+
+先在 Orin NX 和笔记本分别执行：
+
+```bash
+sha256sum models/go2w/model_700.pt
+```
+
+只有两端 SHA-256 完全相同才能继续比较。将以下两项复制到笔记本：
+
+- `logs/real/policy_mp_observation.csv`
+- `models/go2w/model_700.pt`
+
+在笔记本的项目环境中执行同一条离线复现命令：
+
+```bash
+python scripts/policy/replay_observation_csv.py \
+  logs/real/policy_mp_observation.csv \
+  --model models/go2w/model_700.pt --threads 1
+```
+
+比较两端的 `mean_error` 和 `max_error`。误差接近浮点舍入范围，说明相同 observation
+在两台计算机上产生的 action 基本一致；误差明显时再检查模型、PyTorch 版本和计算架构。
+
+## 四、退出和下一次重启
+
+- 按 `2` 前按 `q`：退出且不会启动 LowCmd。
+- LowCmd 启动后按 Ctrl+C、Back 或正常结束：程序发送紧急阻尼并关闭。
+- 进入阻尼后不能直接再次 StandUp。下一次运行前先执行
+  `python scripts/real/select_wheeled_sport.py`。
+- 发生剧烈抖动、异常抬腿、超速或姿态快速发散时立即退出，不要等待测试自动结束。
+
+## 附：宇树原装遥控器入口
 
 ```bash
 python scripts/real/test_policy_unitree_remote.py
 ```
 
-脚本初始化 DDS 并收到原装遥控器数据后：
+该入口使用 `L2+R2` 触发接管，Select 退出；它不是当前 Xbox 三步流程的必要步骤。
 
-1. 先松开 `L2+R2`，再同时按下；该组合触发
-   `ReleaseMode → INITIAL_JOINTS_POS 首帧 → 500 Hz LowCmd → 加载 policy`。
-2. 检查 `[POST-RELEASE REMOTE]`：packet 计数应增加，消息 age 应保持很小，证明
-   ReleaseMode 后仍能收到 LowState 中的遥控器字段。
-3. 保持三个摇杆回中，确认 `[COMMAND SOURCE]` 的三个速度均为零。
-4. 轻微推动左摇杆，让打印的 `vx` 从约 `0.05` 开始。
-5. 依次在约 `0.05、0.10、0.20、0.30 m/s` 观察轮子、腿关节和机身稳定性。
-6. 小幅测试 `vy` 和 `vyaw`，每次只改变一个方向。
-7. 摇杆回中后确认速度归零；Select 退出并进入阻尼。
-8. 吊架测试稳定后，才能在地面从最低速度重新开始，旁边必须有人保护。
-
-默认映射为 `vx=Ly`、`vy=-Lx`、`vyaw=-Rx`。不要直接把摇杆推满；满行程会
-映射到 `CTRL.COMMAND_LIMITS`。宇树手柄方案没有 deadman，摇杆始终生效；这样无需
-长按 A，可避免手柄持续蜂鸣。
-
-`--lowstate-timeout` 默认是 0.20 秒。LowState 停止更新时程序会退出并进入阻尼。
-但 `wireless_remote[40]` 没有独立序号：如果 LowState 继续更新却反复携带冻结的旧
-手柄字节，仅靠该字段无法判断手柄失联，因此第一次测试必须保持吊架保护。
+Xbox 映射为左摇杆纵轴→`vx`、左摇杆横轴→`vy`、右摇杆横轴→`vyaw`；A 是 deadman，
+Back 退出。不要直接推满摇杆；满行程会映射到 `CTRL.COMMAND_LIMITS`。
 
 ## 逐关节限位
 
@@ -111,11 +229,12 @@ python scripts/real/test_policy_unitree_remote.py
 
 - StandUp 期间没有 LowCmd 干扰。
 - ReleaseMode 返回后由固定位置环立即、平稳接管。
+- 预热期间不发送 policy action，预热后 policy 稳定在约 50 Hz。
 - 零速 policy 能稳定站立至少 60 秒。
-- 宇树手柄 ReleaseMode 后 packet 计数持续增加。
-- 宇树手柄摇杆回中时三个速度均为零。
+- Xbox 松开 A 时三个速度均为零。
+- Xbox 按住 A 后三个轴方向、回中值和限幅正确。
 - 从低速开始时，前进、侧向和转向方向正确且机器人保持稳定。
-- Ctrl+C 或 Select 退出后正常进入阻尼并关闭。
+- Ctrl+C 或 Back 退出后正常进入阻尼并关闭。
 
 ## 异常处理
 

@@ -8,14 +8,16 @@
 
 import time
 import threading
+import os
+from typing import Any, Optional, cast
+
 import numpy as np
 
 from unitree_sdk2py.core.channel import (ChannelFactoryInitialize,
                                           ChannelPublisher,
                                           ChannelSubscriber)
 from unitree_sdk2py.idl.unitree_go.msg.dds_ import LowCmd_, LowState_
-from unitree_sdk2py.idl.default import (unitree_go_msg_dds__LowCmd_,
-                                         unitree_go_msg_dds__LowState_)
+from unitree_sdk2py.idl.default import unitree_go_msg_dds__LowCmd_
 from unitree_sdk2py.utils.crc import CRC
 from unitree_sdk2py.utils.thread import RecurrentThread
 from unitree_sdk2py.comm.motion_switcher.motion_switcher_client import MotionSwitcherClient
@@ -27,12 +29,13 @@ from config.go2w_config import DDS
 
 class DdsDriver(DriverBase):
 
-    def __init__(self, net_if: str = DDS.DEFAULT_NET_IF):
+    def __init__(self, net_if: str = DDS.DEFAULT_NET_IF, lowcmd_cpu: Optional[int] = None):
         self._net_if = net_if
-        self._pub = None
-        self._sub = None
-        self._low_cmd = None
-        self._thread = None
+        self._lowcmd_cpu = lowcmd_cpu
+        self._pub: Optional[ChannelPublisher] = None
+        self._sub: Optional[ChannelSubscriber] = None
+        self._low_cmd: Optional[LowCmd_] = None
+        self._thread: Optional[RecurrentThread] = None
         self._running = False
         self._crc = CRC()
 
@@ -44,6 +47,7 @@ class DdsDriver(DriverBase):
 
         self._emergency = False
         self._violation_msg = ""
+        self._write_count = 0
 
     # ── DriverBase 接口 ───────────────────────────────────────────────────
 
@@ -55,17 +59,19 @@ class DdsDriver(DriverBase):
         self._sub.Init(self._on_lowstate, 10)
 
         self._low_cmd = unitree_go_msg_dds__LowCmd_()
-        self._low_cmd.head[0] = 0xFE
-        self._low_cmd.head[1] = 0xEF
+        head = cast(Any, self._low_cmd.head)
+        motor_cmd = cast(Any, self._low_cmd.motor_cmd)
+        head[0] = 0xFE
+        head[1] = 0xEF
         self._low_cmd.level_flag = 0xFF
         self._low_cmd.gpio = 0
         for i in range(20):
-            self._low_cmd.motor_cmd[i].mode = 0x01
-            self._low_cmd.motor_cmd[i].q = DDS.POS_STOP_F
-            self._low_cmd.motor_cmd[i].dq = DDS.VEL_STOP_F
-            self._low_cmd.motor_cmd[i].kp = 0.0
-            self._low_cmd.motor_cmd[i].kd = 0.0
-            self._low_cmd.motor_cmd[i].tau = 0.0
+            motor_cmd[i].mode = 0x01
+            motor_cmd[i].q = DDS.POS_STOP_F
+            motor_cmd[i].dq = DDS.VEL_STOP_F
+            motor_cmd[i].kp = 0.0
+            motor_cmd[i].kd = 0.0
+            motor_cmd[i].tau = 0.0
 
         self._pub = ChannelPublisher(DDS.LOWCMD_TOPIC, LowCmd_)
         self._pub.Init()
@@ -75,6 +81,7 @@ class DdsDriver(DriverBase):
 
     def start_lowcmd_thread(self) -> bool:
         """立即发送当前缓存指令，然后启动 500Hz LowCmd 发布线程。"""
+        assert self._low_cmd is not None and self._pub is not None, "DDS 尚未初始化"
         if self._thread is not None:
             print("[DdsDriver] LowCmd 发布线程已经启动")
             return False
@@ -89,6 +96,7 @@ class DdsDriver(DriverBase):
         self._fill_command(cmd)
         self._low_cmd.crc = self._crc.Crc(self._low_cmd)
         self._pub.Write(self._low_cmd)
+        self._write_count += 1
 
         self._running = True
         self._thread = RecurrentThread(
@@ -104,6 +112,13 @@ class DdsDriver(DriverBase):
             return self._latest_state
 
     def send_command(self, cmd: MotorCommand) -> None:
+        arrays = (cmd.positions, cmd.velocities, cmd.kp, cmd.kd, cmd.torques)
+        if any(np.asarray(values).shape != (16,) for values in arrays):
+            self.set_emergency_damping()
+            raise RuntimeError("MotorCommand 必须包含 16 路电机数据")
+        if any(not np.isfinite(values).all() for values in arrays):
+            self.set_emergency_damping()
+            raise RuntimeError("MotorCommand 包含 NaN/Inf")
         with self._cmd_lock:
             self._pending_cmd = cmd
             self._has_pending_cmd = True
@@ -117,6 +132,8 @@ class DdsDriver(DriverBase):
         lowcmd_started = self._thread is not None
         self._running = False
         if lowcmd_started:
+            assert self._thread is not None
+            assert self._low_cmd is not None and self._pub is not None
             self._thread.Wait()
             self._fill_damping()
             self._low_cmd.crc = self._crc.Crc(self._low_cmd)
@@ -129,13 +146,16 @@ class DdsDriver(DriverBase):
     def _on_lowstate(self, msg: LowState_):
         state = RobotState()
         state.tick = msg.tick
-        state.battery_soc = msg.power_v
+        state.received_monotonic_ns = time.perf_counter_ns()
+        state.battery_voltage = msg.power_v
+        state.battery_current = msg.power_a
 
         jp = np.zeros(16, dtype=np.float32)
         jv = np.zeros(16, dtype=np.float32)
         jt = np.zeros(16, dtype=np.float32)
+        motor_state = cast(Any, msg.motor_state)
         for i in range(16):
-            ms = msg.motor_state[i]
+            ms = motor_state[i]
             jp[i] = ms.q
             jv[i] = ms.dq
             jt[i] = ms.tau_est
@@ -143,13 +163,13 @@ class DdsDriver(DriverBase):
         state.joint_velocities = jv
         state.joint_torques = jt
 
-        q = msg.imu_state.quaternion
+        q = cast(Any, msg.imu_state.quaternion)
         state.imu_quat = np.array([q[0], q[1], q[2], q[3]], dtype=np.float32)
-        g = msg.imu_state.gyroscope
+        g = cast(Any, msg.imu_state.gyroscope)
         state.imu_gyro = np.array([g[0], g[1], g[2]], dtype=np.float32)
-        a = msg.imu_state.accelerometer
+        a = cast(Any, msg.imu_state.accelerometer)
         state.imu_accel = np.array([a[0], a[1], a[2]], dtype=np.float32)
-        r = msg.imu_state.rpy
+        r = cast(Any, msg.imu_state.rpy)
         state.imu_rpy = np.array([r[0], r[1], r[2]], dtype=np.float32)
 
         with self._state_lock:
@@ -160,6 +180,16 @@ class DdsDriver(DriverBase):
     def _control_loop(self):
         if not self._running:
             return
+        assert self._low_cmd is not None and self._pub is not None
+
+        if self._lowcmd_cpu is not None and not getattr(self, "_cpu_pinned", False):
+            try:
+                os.sched_setaffinity(threading.get_native_id(), {self._lowcmd_cpu})
+            except OSError as exc:
+                print(f"[DdsDriver] LowCmd 线程绑定 CPU 失败: {exc}")
+            else:
+                print(f"[DdsDriver] LowCmd 线程绑定 CPU {self._lowcmd_cpu}")
+            self._cpu_pinned = True
 
         with self._state_lock:
             state = self._latest_state
@@ -181,6 +211,7 @@ class DdsDriver(DriverBase):
 
         self._low_cmd.crc = self._crc.Crc(self._low_cmd)
         self._pub.Write(self._low_cmd)
+        self._write_count += 1
 
     # ── 安全检测 ──────────────────────────────────────────────────────────
 
@@ -206,18 +237,22 @@ class DdsDriver(DriverBase):
     # ── LowCmd 填充 ───────────────────────────────────────────────────────
 
     def _fill_damping(self):
+        assert self._low_cmd is not None
+        motor_cmd = cast(Any, self._low_cmd.motor_cmd)
         for i in range(20):
-            self._low_cmd.motor_cmd[i].mode = 0x01
-            self._low_cmd.motor_cmd[i].q = DDS.POS_STOP_F
-            self._low_cmd.motor_cmd[i].dq = 0.0
-            self._low_cmd.motor_cmd[i].kp = 0.0
-            self._low_cmd.motor_cmd[i].kd = DDS.EMERGENCY_DAMPING_KD
-            self._low_cmd.motor_cmd[i].tau = 0.0
+            motor_cmd[i].mode = 0x01
+            motor_cmd[i].q = DDS.POS_STOP_F
+            motor_cmd[i].dq = 0.0
+            motor_cmd[i].kp = 0.0
+            motor_cmd[i].kd = DDS.EMERGENCY_DAMPING_KD
+            motor_cmd[i].tau = 0.0
 
     def _fill_command(self, cmd: MotorCommand):
         """零阶保持：直接写入 controller 发来的目标，不做平滑。"""
+        assert self._low_cmd is not None
+        motor_cmd = cast(Any, self._low_cmd.motor_cmd)
         for i in range(16):
-            mc = self._low_cmd.motor_cmd[i]
+            mc = motor_cmd[i]
             mc.mode = 0x01
             mc.q = cmd.positions[i]
             mc.dq = cmd.velocities[i]
@@ -268,3 +303,7 @@ class DdsDriver(DriverBase):
     @property
     def emergency(self) -> bool:
         return self._emergency
+
+    @property
+    def write_count(self) -> int:
+        return self._write_count

@@ -61,6 +61,12 @@ free -h
 
 ## 5.6 现场事实与推断的区分
 
-- 已验证：显示器进入、SSH 进入、用户名、主机名、Ubuntu 版本、`eth0` 地址、D435i USB 枚举。
-- 尚未验证：JetPack/L4T 版本、GPU 驱动、RealSense SDK、ROS2、默认网关、Wi-Fi/4G 状态、是否安装浏览器。
-- 不应推断：任何默认密码、其他机器的 IP、NVIDIA 开发套件的 USB 虚拟网卡地址、Orin 是否能直接运行当前笔记本 Python 环境。
+- 已验证：显示器/SSH、用户名、主机名、Ubuntu 版本、`eth0` 地址和 D435i USB 枚举。
+- 已验证：L4T R35.3.1、CUDA 11.4、cuDNN 8.6、TensorRT 8.5、25W mode 3、
+  8 核 CPU 和 16 GiB 内存。
+- 已验证：系统 Python 3.8.10 可使用；Python 3.9 无法加载系统 NumPy/OpenCV；
+  裸命令 `python` 指向 Python 2.7。
+- 已完成：项目内 `.venv`、CPU-only PyTorch、MuJoCo、CycloneDDS 0.10.2 和 VS Code
+  配置。完整记录见 [`guide/12_orin_environment.md`](../guide/12_orin_environment.md)。
+- 尚未验证：RealSense SDK、默认网关、Wi-Fi/4G 状态和三个迁移后 checkpoint。
+- 不应推断：任何默认密码、其他机器的 IP 或 NVIDIA 开发套件的 USB 虚拟网卡地址。

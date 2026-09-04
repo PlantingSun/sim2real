@@ -7,7 +7,7 @@
 ## 执行
 
 ```bash
-cd /home/robot/sim2real_ws
+cd /home/unitree/sim2real
 source setup.sh mujoco
 
 # 零速站立
