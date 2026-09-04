@@ -1,4 +1,4 @@
-# sim2real — Go2W 机载 Orin NX Sim-to-Real 部署
+# sim2real — Go2W 笔记本 / Orin NX Sim-to-Real 部署
 
 Unitree Go2W 机器人 sim-to-real 控制系统。不使用 ROS/ROS2，纯 Python + PyTorch。
 
@@ -16,8 +16,12 @@ third_party/    项目内 Unitree SDK2 Python 源码
 
 ## 快速开始
 
+`setup.sh` 在 x86_64 笔记本上自动使用 Conda `unitree_py38`，在 aarch64 Orin NX 上
+自动使用项目 `.venv`。可用 `SIM2REAL_HOST=laptop|orin` 显式覆盖。
+
 ```bash
-cd /home/unitree/sim2real
+# 笔记本；Orin NX 上对应 /home/unitree/sim2real
+cd /home/robot/sim2real_ws
 source setup.sh policy
 python scripts/policy/test_policy_offline.py
 python scripts/policy/benchmark_policy_latency.py --policy go2w --threads 1
@@ -53,6 +57,9 @@ go2wwmp 的网络、深度输入和 MuJoCo pipeline 验证见
 本轮深度公式、5500/6000 选择、时序 bug 和验证结果详见
 [`guide/12_go2wwmp_pipeline_review.md`](guide/12_go2wwmp_pipeline_review.md)。
 
+笔记本/Orin 同观测精度比较、抖动日志结论和单进程消融步骤见
+[`guide/14_laptop_orin_ablation.md`](guide/14_laptop_orin_ablation.md)。
+
 ## Orin NX 环境
 
 - 项目内 `.venv`，基于系统 Python 3.8.10；不使用 Conda 或 Python 3.9
@@ -61,8 +68,8 @@ go2wwmp 的网络、深度输入和 MuJoCo pipeline 验证见
 - 复用 JetPack 系统 OpenCV 4.2.0 和 PyYAML 5.3.1
 
 安装、环境复建、VS Code 和验证步骤见
-[`guide/12_orin_environment.md`](guide/12_orin_environment.md)。`setup.sh` 已固定为
-Orin NX 专用入口，并隔离系统全局 ROS Foxy 的 Python 和 CycloneDDS 0.7 路径。
+[`guide/12_orin_environment.md`](guide/12_orin_environment.md)。在 Orin profile 下，
+`setup.sh` 仍会隔离系统全局 ROS Foxy 的 Python 和 CycloneDDS 0.7 路径。
 go2w/go2wcr 已在 25W 模式通过 50 Hz CPU 延时门槛；WMP 的周期性 world-model 帧仍超时。
 完整数据见 [`guide/13_orin_policy_benchmark.md`](guide/13_orin_policy_benchmark.md)。
 

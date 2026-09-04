@@ -133,7 +133,9 @@ class ControllerGo2w:
             action = self.actor_critic.actor(obs_norm).flatten()
             action = torch.clip(action, -self.clip_action, self.clip_action)
         self.last_action = action
-        return action.numpy()
+        # 返回独立数组：policy worker 在预热时会清零 last_action，不能让该原地操作
+        # 反向篡改已经用于 MotorCommand/日志的 action NumPy view。
+        return action.numpy().copy()
 
     def action_to_motor_command(self, action: np.ndarray) -> np.ndarray:
         """将网络原始动作转换为 DDS 顺序的 MotorCommand 所需数据。

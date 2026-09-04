@@ -198,3 +198,71 @@
 - 修正预热语义：未发送的预热 action 不再写入 `last_action` 历史。
 - 实机 CSV 已扩展为完整状态/时序/action/MotorCommand，并自动生成独立的 265 维
   observation CSV；新增纯离线 `replay_observation_csv.py` 供笔记本逐帧对比。
+
+## 2026-09-04 笔记本基线恢复与精度消融
+
+- 已确认工作区当前位于 Orin 适配提交 `6fbac4e`，而上一版通用/笔记本代码可从 Git 历史读取。
+- 本阶段保留 Orin 双进程入口，计划恢复显式宿主机配置与单进程笔记本基线，不做破坏性回退。
+- 已定位坏运行日志 `logs/real/policy_fixed_2.csv` 与对应 265 维输入
+  `logs/real/policy_fixed_2_observation.csv`；下一步核对字段、模型哈希和逐帧动作误差。
+- 在用户重新连接机器人前只做离线复放与静态预检，不初始化 DDS、不发送 LowCmd。
+- 笔记本与 Orin 的 `model_700.pt` SHA-256 均为
+  `5105a856191fd19f7ee0755b8839f3f5a245b4b6040778351c604b037dba0ebf`。
+- x86_64/PyTorch 2.3.1 对 Orin PyTorch 2.0.0 日志逐帧复放：1874 个 active 帧
+  `mean_abs=9.3988e-08`、`rmse=1.4081e-07`、`max_abs=1.6689e-06`，通过 `1e-5` 门槛。
+  笔记本使用 1 线程和历史默认 16 线程的统计完全相同。
+- 从主 CSV 的状态/命令/上一帧 action 重建全部 2024 帧 265 维 observation，与 policy
+  子进程日志逐元素完全一致（最大误差 `0`），排除 Pipe 字段损坏、映射或历史顺序错误。
+- 识别并修复预热日志的共享内存假误差：`compute_action()` 改为返回独立 NumPy 副本；
+  该问题只影响旧 warmup action 日志，不影响当时 active 控制。
+- `setup.sh` 已恢复 laptop/orin 自动 profile；x86_64 使用 Conda `unitree_py38` 和
+  `enp0s31f6`，aarch64 保留 `.venv`、`eth0` 和单线程设置。
+- 新增从提交 `64c32a0` 恢复的 `test_policy_real_single_process.py`，保留当前 driver
+  安全检查，并提供可选同格式日志用于 A/B；未连接或控制机器人。
+- 验证通过：Bash/Zsh 语法、Python 编译、laptop policy/robot 环境导入、go2w 离线测试、
+  observation 精度复放、6 项 go2wwmp `unittest`。Conda 环境未安装 `pytest`，因此直接
+  运行同一 unittest 文件完成测试，不为此改变用户环境。
+
+## 2026-09-04 笔记本稳定实机日志对比
+
+- 用户确认笔记本单进程在同一真实机器人上仍然非常稳定、无明显抖动且抗扰性强。
+- 新日志为 `logs/real/policy_laptop_single.csv`；开始与 Orin 抖动日志做时序、状态、动作、
+  MotorCommand 和频谱对齐分析。
+- 本阶段仅离线分析，不初始化 DDS，不发送机器人控制命令。
+- 已确认笔记本主日志和 observation 各含 936 帧，约 18.79 秒，零速度命令且无 warmup；
+  字段完整，可与 Orin 的 1874 个 active 帧直接比较。
+- 初步定量对比完成：Orin 存在 8.4–8.6 Hz 闭环极限环；IMU、腿速和动作跳变约为稳定
+  笔记本的 11–22 倍。Orin 有 30–68 ms 策略周期尾延时，但周期尖峰与动作跳变相关性弱。
+- 发现重要混杂变量：Orin 抖动段电压平均 28.59 V、最低 26.76 V，笔记本稳定段约
+  31.67 V；Orin 振荡电流最大 52.26 A。
+- 分段分析确认 Orin 在 16–24 秒曾达到与笔记本几乎相同的稳定性，说明双进程/DDS 并非
+  必然抖动；34–37 秒再振荡与 30–68 ms 调度尖峰同步，其中半数 >30 ms 周期紧随每
+  0.5 秒一次的大段终端打印。
+- 首帧接管比较显示笔记本动作阶跃反而更大，排除“Orin 第一帧 policy 目标更猛”这一简单解释。
+- 用户补充现场标注：后半段坏状态来自人工外推，Orin 长尾属于暴走后的次生现象。分析
+  窗口已改为两端前半段未外推的连续最佳稳态，撤回基于后半段自然状态转换的因果解释。
+- 生成聚焦图时首次补丁因同一文件同时 Delete/Add 被工具拒绝；未产生文件变化，改用新文件名继续。
+- 已按现场标注生成前半段连续最佳 5 秒对比：两端策略周期同为约 20 ms，Orin 无长尾，
+  但 IMU、腿速、action 和腿目标波动仍为笔记本约 28–42 倍，并保留 8.5 Hz 谱峰。
+- 笔记本 observation/action 936 帧离线复放逐元素误差为零，日志内部一致。
+- Phase 24 完成：没有把人工外推后的尾延时、电压或通信异常用于主因判断。当前证据排除
+  Pipe 数值损坏、模型精度差、LowState 过旧及前半段 50 Hz policy 失速；没有排除实际
+  500 Hz LowCmd 发布抖动、不完整 CPU 隔离、网卡 IRQ 竞争或第二个 LowCmd 发布者。
+- 本阶段只完成离线日志和代码路径审查，没有初始化 DDS、发送 LowCmd 或运行实机控制。
+
+## 2026-09-04 排除 Pipe 后的 Orin 专属排查
+
+- 用户已在笔记本运行当前双进程入口，机器人依然稳定，因此“双进程 + 同步 Pipe 架构
+  本身”可从首要嫌疑中排除。
+- 开始将剩余变量收敛到 Orin 特有的 500 Hz LowCmd 调度、CPU/IRQ/DDS 线程布局、系统
+  性能状态和软件运行环境；本阶段先形成逐项消融计划，不运行机器人。
+- 用户修正历史判断：4.8 的暂时正常可能只是假象，不作为 Orin 链路稳定的证据；相关
+  guide/findings 已改为历史观察并标明不可用于排除根因。
+- 已汇总当前证据分级和八步调试顺序；首要新增指标是 500 Hz LowCmd 逐次间隔、CRC/Write
+  耗时、漏周期/补跑和 action 首次应用延迟。
+- `logs/` 不再被 `.gitignore` 排除；四个原始 CSV 共约 14 MB，新增
+  `logs/real/README.md` 记录帧数、工况、有效区间和 SHA-256。未修改原始 CSV。
+- 首次暂存因当前沙箱中的 `.git` 只读而失败，未产生部分暂存；授权后已仅暂存
+  `.gitignore` 和 `logs/real/`，不包含提交或推送。
+- 四个原始 CSV 使用 Python `csv` 默认 CRLF；没有为格式检查改写数据，新增
+  `.gitattributes` 将其标为 binary，确保 Git 原样保存且不展开巨量逐行 diff。

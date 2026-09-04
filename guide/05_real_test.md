@@ -174,7 +174,8 @@ python scripts/policy/replay_observation_csv.py \
   --model models/go2w/model_700.pt --threads 1
 ```
 
-记录输出的 `mean_error` 和 `max_error`。
+记录输出的 `active mean_abs`、`active max_abs`、运行环境和模型 SHA-256。旧日志的
+warmup action 可能被历史清零操作覆盖，因此不参与 active 网络输出精度判定。
 
 ### 3.4 复制到笔记本后对比
 
@@ -197,8 +198,9 @@ python scripts/policy/replay_observation_csv.py \
   --model models/go2w/model_700.pt --threads 1
 ```
 
-比较两端的 `mean_error` 和 `max_error`。误差接近浮点舍入范围，说明相同 observation
-在两台计算机上产生的 action 基本一致；误差明显时再检查模型、PyTorch 版本和计算架构。
+比较两端的 `active mean_abs` 和 `active max_abs`。误差接近浮点舍入范围，说明相同
+observation 在两台计算机上产生的 action 基本一致；误差明显时再检查模型、PyTorch
+版本和计算架构。本轮实际结果与单进程消融见 `guide/14_laptop_orin_ablation.md`。
 
 ## 四、退出和下一次重启
 

@@ -19,6 +19,13 @@
 5. `input/` 输入设备检查
 6. `real/` 实机控制测试
 
+Go2W 抖动消融有两个互斥入口：
+
+- `real/test_policy_real.py`：Orin 双进程 DDS/policy 版本。
+- `real/test_policy_real_single_process.py`：从已验证笔记本版本恢复的单进程基线。
+
+二者不能同时运行；详细顺序见 `guide/14_laptop_orin_ablation.md`。
+
 CRRL 对应入口：
 
 - `policy/test_policy_go2wcr_offline.py`

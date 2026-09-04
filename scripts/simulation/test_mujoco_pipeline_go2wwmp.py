@@ -18,7 +18,7 @@ from policy.controller_go2wwmp import ControllerGo2wWMP
 
 
 DEFAULT_SCENE = str(GO2W_SCENE)
-DEFAULT_MODEL = model_path("go2wwmp/model_1750.pt")
+DEFAULT_MODEL = model_path("go2wwmp/model_6000.pt")
 TRAINED_CAMERA_POS = np.array([0.34, -0.0375, 0.09], dtype=np.float64)
 TRAINED_CAMERA_FOV_DEG = 58.0
 TRAINED_CAMERA_FORWARD = np.array(
