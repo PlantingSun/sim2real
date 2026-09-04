@@ -25,6 +25,7 @@ python scripts/policy/test_policy_offline.py
 source setup.sh mujoco
 python scripts/simulation/test_mujoco_pipeline.py
 python scripts/simulation/test_mujoco_pipeline_go2wwmp.py --check-only
+MUJOCO_GL=egl python scripts/simulation/test_mujoco_pipeline_go2wwmp.py --headless-frames 6
 
 # 实机 DDS（setup 只检查依赖；运行下面脚本才会打开机器人网络）
 source setup.sh robot
@@ -47,7 +48,9 @@ CRRL/go2wcr 的分步入口和人工复核标准见：
 
 go2wwmp 的网络、深度输入和 MuJoCo pipeline 验证见
 [`guide/11_wmp_simulation_test.md`](guide/11_wmp_simulation_test.md)。默认 checkpoint
-使用 `models/go2wwmp/model_1750.pt`，不会自动复制或下载。
+使用 `models/go2wwmp/model_6000.pt`，不会自动复制或下载。
+本轮深度公式、5500/6000 选择、时序 bug 和验证结果详见
+[`guide/12_go2wwmp_pipeline_review.md`](guide/12_go2wwmp_pipeline_review.md)。
 
 ## 依赖
 

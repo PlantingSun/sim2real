@@ -30,6 +30,7 @@ CRRL 对应入口：
 python scripts/policy/test_policy_go2wcr_offline.py
 python scripts/simulation/test_mujoco_pipeline_go2wcr.py
 python scripts/simulation/test_mujoco_pipeline_go2wwmp.py --check-only
+MUJOCO_GL=egl python scripts/simulation/test_mujoco_pipeline_go2wwmp.py --headless-frames 6
 python scripts/real/test_policy_go2wcr_real.py
 ```
 

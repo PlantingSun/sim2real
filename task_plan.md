@@ -2,7 +2,7 @@
 
 ## Goal
 
-在保持现有 `driver` 层接口稳定的前提下，将 `/home/robot/simtosim/src` 中的 go2wcr/CRRL 算法接入当前 sim2real 项目，复现并补齐 policy → simulation → real_test 的验证链路，整理 `scripts` 分类，补充准确、简洁、可人工审查的代码注释与分步 Markdown 文档，为最终部署实机做好准备。
+在保持现有 `driver` 层接口稳定的前提下，将 `/home/robot/simtosim/src` 中的 go2wcr/CRRL 和 go2wwmp 接入当前 sim2real 项目，复现并补齐 policy → simulation → real_test 的验证链路，整理 `scripts` 分类，补充准确、简洁、可人工审查的代码注释与分步 Markdown 文档，为最终部署实机做好准备。
 
 ## Prompt
 
@@ -24,7 +24,7 @@
 - [in_progress] Phase 12: 从零建立 Go2W 机载 Orin NX 使用基础（转为本地图形桌面）
 - [completed] Phase 13: 根据现场设备事实规划联网与 Orin 本地使用（远程传图暂缓）
 - [completed] Phase 14: 精简 Orin NX 本地图形桌面入门文档
-- [in_progress] Phase 15: 移植并验证 Go2W WMP MuJoCo pipeline
+- [completed] Phase 15: 移植并验证 Go2W WMP MuJoCo pipeline
 
 ## Decisions
 
@@ -49,6 +49,9 @@
 | 首次 RealSense/ROS2 资料检索请求语法错误 | 1 | 修正查询字符串后重新检索官方 RealSense wrapper 和 ROS2 文档 |
 | 宇树营销手册页面无法直接打开 | 1 | 使用搜索到的 Go2-W 手册副本和宇树官网产品页交叉核对；不把 NVIDIA 开发套件接口套用到 Go2W |
 | 宇树支持页正文无法由浏览工具展开 | 1 | 以用户现场按该官方教程成功验证的结果为设备事实，并保留官方链接；不推测未显示的细节 |
+| 系统 `/usr/bin/python3` 没有 MuJoCo | 1 | 使用项目既有 `unitree_py38` 环境继续执行渲染与 checkpoint 验证 |
+| 直接按文件路径运行 WMP 脚本时找不到 `config` | 1 | 按项目约定先 `source setup.sh policy` 设置项目 `PYTHONPATH` 后重跑；同时纳入入口易用性审查 |
+| zsh 校验循环使用保留变量 `path` 导致后续找不到 `git` | 1 | 改用任务专用变量名 `review_file`，不再覆盖 zsh 的 PATH 绑定 |
 
 ## Next Step
 
@@ -109,7 +112,7 @@
 - 已完成 `policy/controller_go2wwmp.py` 和 `scripts/simulation/test_mujoco_pipeline_go2wwmp.py`。
 - 已完成 checkpoint 严格加载、CPU world model 构造、单步检查和 6 周期无窗口推理验证；已确认动作/观测维度与 simtosim 结构一致。
 - 已将共享 XML 相机和 WMP pipeline 统一到用户确认的 `[0.34, -0.0375, 0.09]`；不再保留旧场景位置对比入口。
-- 已记录当前机器缺少可用 GLFW/OpenGL context，实际窗口闭环待在 Orin 本地图形桌面上执行；因此 Phase 15 暂保留为 in_progress，未宣称 MuJoCo viewer 验证完成。
+- 当前机器仍不能创建 GLFW viewer，但 Phase 19 已通过 EGL 真实深度渲染和 300 帧闭环完成 pipeline 验证；图形桌面 viewer 保留为人工视觉复核，不再阻塞 Phase 15。
 
 ## Phase 16 — 内置 WMP 推理依赖修正（completed）
 
@@ -135,3 +138,26 @@
 - [x] 明确仍属于操作系统/运行环境的依赖边界，避免把“项目文件自包含”误写成“无需安装 Python/CUDA/DDS”。
 
 结果：项目源码、Unitree SDK2 Python、Go2W MuJoCo MJCF/STL 和路径解析已内置；从 `/tmp` 启动的离线与 XML 检查通过。权重仍因 `.gitignore` 规则不进入 Git，目标设备需要另行复制本地 checkpoint。
+
+## Phase 19 — Go2WWMP simulation pipeline 深度链路复审（completed）
+
+- [x] 逐文件对照 simtosim 训练环境、MuJoCo 深度发布、ROS 控制器、WMP 网络与当前移植实现。
+- [x] 明确深度的物理单位、裁剪/归一化、无效值、图像方向、更新频率和时间对齐语义。
+- [x] 修复 `test_mujoco_pipeline_go2wwmp.py` 及必要的 controller/网络边界，并补充可自动验证的测试。
+- [x] 回归 checkpoint 加载、无窗口闭环、场景加载、静态检查与文档，列出仍需图形设备人工确认的事项。
+
+本阶段只改进 Go2WWMP 仿真与离线验证，不启动 DDS、LowCmd、Sport Mode 或真实机器人控制。
+
+结果：修复训练深度中心化、100 ms 深度延迟、连续五帧动作历史、yaw command 缩放、启动历史、
+观测/action 裁剪和 check-only 关节顺序；默认 `model_6000.pt` 已通过 6 项单元测试、严格加载、
+100 帧静止命令闭环和 `vx=0.6` 的 300 帧楼梯场景 EGL 闭环。viewer 的视觉姿态仍需在图形桌面人工确认。
+
+## Phase 20 — 5500/6000 checkpoint 与修复说明文档（completed）
+
+- [x] 分别严格加载 `model_5500.pt`、`model_6000.pt` 并运行短 MuJoCo 深度闭环。
+- [x] 写明米制深度、`-0.5` 偏移、encoder 二次减法、无效值与相机延迟的完整数值链路。
+- [x] 写明动作历史、观测缩放、Ctrl/DDS 顺序和相机参数等其他修复。
+- [x] 补充两个 checkpoint 的无窗口与 viewer 启动命令，以及实机前的人工对照标准。
+
+结果：两套 checkpoint 均兼容当前网络结构；6000 保持默认，5500 可通过 `--model` 显式选择。
+详细人工审查记录见 `guide/12_go2wwmp_pipeline_review.md`。

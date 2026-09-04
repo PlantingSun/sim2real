@@ -6,6 +6,10 @@
 
 - `go2w/model_700.pt`
 - `go2wcr/model_1499.pt`
-- `go2wwmp/model_1750.pt`
+- `go2wwmp/model_5500.pt`（已通过 strict load 和短闭环）
+- `go2wwmp/model_6000.pt`（当前 simulation pipeline 默认，已通过长闭环）
+
+本地也可以保留 `model_1750.pt`、`model_3500.pt` 等其他已审查版本，运行时用
+`--model` 显式选择；不要仅凭文件名假定训练配置相同。
 
 代码默认路径已经基于项目根目录解析，不依赖当前终端所在目录。

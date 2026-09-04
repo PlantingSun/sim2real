@@ -9,6 +9,7 @@ from __future__ import annotations
 
 from argparse import Namespace
 from pathlib import Path
+from typing import Optional
 
 import numpy as np
 import torch
@@ -24,6 +25,9 @@ class ControllerGo2wWMP:
     """Go2W WMP 推理适配器，不依赖 ROS 或具体驱动后端。"""
 
     IMAGE_SHAPE = (64, 64)
+    DEPTH_NEAR_M = 0.0
+    DEPTH_FAR_M = 2.0
+    DEPTH_CENTER = 0.5
     UPDATE_INTERVAL = 5
     PROP_DIM = CTRL.NUM_ACTIONS * 2 + 9 - 4  # 37，去掉四个轮关节位置
     HISTORY_FRAME_DIM = 50  # gyro(3) + gravity(3) + legs(12) + dq(16) + action(16)
@@ -34,6 +38,7 @@ class ControllerGo2wWMP:
     ACTOR_OBS_DIM = PRIVILEGED_DIM + PROP_DIM + CTRL.NUM_ACTIONS + HEIGHT_DIM
     WM_FEATURE_DIM = 512
     WM_LATENT_DIM = 40
+    COMMAND_SCALE = torch.tensor((1.0, 1.0, 0.25), dtype=torch.float32)
 
     def __init__(self, model_path: str, config_path=None):
         self.initial_pos = torch.tensor(CTRL.INITIAL_JOINTS_POS, dtype=torch.float32)
@@ -73,6 +78,7 @@ class ControllerGo2wWMP:
         self.last_action = torch.zeros(CTRL.NUM_ACTIONS, dtype=torch.float32)
         self.obs_history = torch.zeros(self.HISTORY_LENGTH, self.HISTORY_FRAME_DIM)
         self.wm_action_history = torch.zeros(self.UPDATE_INTERVAL, CTRL.NUM_ACTIONS)
+        self.previous_depth = None
         self.wm_latent = None
         self.wm_feature = torch.zeros(self.WM_FEATURE_DIM)
         self.is_first = torch.ones(1, dtype=torch.float32)
@@ -116,7 +122,7 @@ class ControllerGo2wWMP:
         if not path.is_file():
             raise FileNotFoundError(
                 f"找不到 WMP checkpoint: {path}\n"
-                "请确认 models/go2wwmp/model_1750.pt 已放入当前项目，或用 --model 指定已审查的副本。"
+                "请确认默认 WMP checkpoint 已放入当前项目，或用 --model 指定已审查的副本。"
             )
 
         loaded = torch.load(path, map_location=torch.device("cpu"))
@@ -138,11 +144,11 @@ class ControllerGo2wWMP:
         )
 
     def reset(self) -> None:
-        """用初始站立零运动状态填充五帧历史和 world-model 状态。"""
+        """恢复与训练 runner 相同的全零历史和 world-model 初始状态。"""
         self.last_action.zero_()
         self.obs_history.zero_()
-        self.obs_history[:, 3:6] = torch.tensor((0.0, 0.0, -1.0))
         self.wm_action_history.zero_()
+        self.previous_depth = None
         self.wm_latent = None
         self.wm_feature.zero_()
         self.is_first.fill_(1.0)
@@ -162,36 +168,58 @@ class ControllerGo2wWMP:
         command_t = torch.as_tensor(command, dtype=torch.float32)
         if command_t.shape != (3,):
             raise ValueError(f"cmd_vel 必须是 [vx, vy, vyaw]，实际为 {tuple(command_t.shape)}")
+        if not torch.isfinite(command_t).all():
+            raise ValueError("cmd_vel 包含 NaN 或 Inf")
 
         prop = torch.cat(
             (
                 torch.as_tensor(state.imu_gyro, dtype=torch.float32) * 0.25,
                 torch.as_tensor(gravity, dtype=torch.float32),
-                command_t,
+                command_t * self.COMMAND_SCALE,
                 (jpos_ctrl - self.initial_pos)[self.dof_mask],
                 jvel_ctrl * 0.05,
             )
         )
         if prop.shape != (self.PROP_DIM,):
             raise RuntimeError(f"WMP 本体输入维度错误: {tuple(prop.shape)}")
-        return prop
+        if not torch.isfinite(prop).all():
+            raise ValueError("WMP 本体输入包含 NaN 或 Inf")
+        return torch.clamp(prop, -CTRL.CLIP_OBS, CTRL.CLIP_OBS)
 
-    @staticmethod
-    def _validate_depth(depth_normalized: np.ndarray) -> np.ndarray:
-        """验证已归一化到 [0, 1] 的 64×64 深度图，不替换无效值。"""
-        depth = np.asarray(depth_normalized, dtype=np.float32)
-        if depth.shape != (64, 64):
-            raise ValueError(f"WMP 深度图必须是 (64, 64)，实际为 {depth.shape}")
-        if not np.isfinite(depth).all():
-            raise ValueError("WMP 深度图包含 NaN 或 Inf")
-        if float(depth.min()) < -1.0e-5 or float(depth.max()) > 1.0 + 1.0e-5:
-            raise ValueError("WMP 深度图必须先归一化到 [0, 1]")
-        return np.clip(depth, 0.0, 1.0)
+    @classmethod
+    def preprocess_depth(cls, depth_m: np.ndarray) -> np.ndarray:
+        """把米制深度转换为训练时使用的 ``[-0.5, 0.5]`` 图像。
 
-    def _update_world_model(self, prop: torch.Tensor, depth_normalized: np.ndarray) -> None:
+        Isaac Gym 的无命中深度是 ``-Inf``，训练代码会把它裁剪为远平面。
+        MuJoCo/实机输入中的所有非有限值也统一按远平面处理，避免产生虚假的
+        近距离障碍。Dreamer 的 ConvEncoder 还会按 checkpoint 结构再减 0.5。
+        """
+        depth = np.asarray(depth_m, dtype=np.float32)
+        if depth.shape != cls.IMAGE_SHAPE:
+            raise ValueError(f"WMP 米制深度图必须是 {cls.IMAGE_SHAPE}，实际为 {depth.shape}")
+        depth = np.nan_to_num(
+            depth,
+            copy=True,
+            nan=cls.DEPTH_FAR_M,
+            posinf=cls.DEPTH_FAR_M,
+            neginf=cls.DEPTH_FAR_M,
+        )
+        depth = np.clip(depth, cls.DEPTH_NEAR_M, cls.DEPTH_FAR_M)
+        depth = (depth - cls.DEPTH_NEAR_M) / (cls.DEPTH_FAR_M - cls.DEPTH_NEAR_M)
+        return np.ascontiguousarray(depth - cls.DEPTH_CENTER, dtype=np.float32)
+
+    def _select_delayed_depth(self, depth_m: np.ndarray) -> np.ndarray:
+        """复现训练 depth buffer 的一帧（100 ms）相机延迟。"""
+        current_depth = self.preprocess_depth(depth_m)
+        selected_depth = current_depth if self.previous_depth is None else self.previous_depth
+        # ConvEncoder.forward() 会对输入执行原地减法；这里必须断开 NumPy/Torch
+        # 的共享内存，否则缓存帧会被中心化两次。
+        self.previous_depth = current_depth.copy()
+        return selected_depth.copy()
+
+    def _update_world_model(self, prop: torch.Tensor, depth_m: np.ndarray) -> None:
         """每五个策略周期更新一次 world model。"""
-        depth = self._validate_depth(depth_normalized)
-        # 训练环境给出的图像已经是 [0, 1]；world-model encoder 内部负责中心化。
+        depth = self._select_delayed_depth(depth_m)
         image_t = torch.as_tensor(depth, dtype=torch.float32).unsqueeze(-1)
         wm_obs = {
             "prop": prop,
@@ -221,28 +249,42 @@ class ControllerGo2wWMP:
         obs_now = torch.cat((prop, self.last_action))
         return prop, obs_now, self.obs_history.flatten(0)
 
+    @property
+    def needs_depth_update(self) -> bool:
+        """当前策略帧是否会消费一张新的深度图。"""
+        return self.counter % self.UPDATE_INTERVAL == 0
+
     def step(
         self,
         state: RobotState,
         command: np.ndarray,
-        depth_normalized: np.ndarray,
+        depth_m: Optional[np.ndarray],
     ) -> tuple[np.ndarray, MotorCommand]:
-        """执行一次 50 Hz WMP 推理，返回 Ctrl 动作和 DDS 顺序电机指令。"""
+        """执行一次 50 Hz WMP 推理；深度输入单位为米。"""
         command = np.asarray(command, dtype=np.float32)
+        if command.shape != (3,):
+            raise ValueError(f"cmd_vel 必须是 [vx, vy, vyaw]，实际为 {command.shape}")
+        if not np.isfinite(command).all():
+            raise ValueError("cmd_vel 包含 NaN 或 Inf")
         command = np.clip(command, -CTRL.COMMAND_LIMITS, CTRL.COMMAND_LIMITS)
+        if self.needs_depth_update and depth_m is None:
+            raise ValueError("当前 WMP 帧需要一张 64×64 米制深度图")
         prop, obs_now, obs_history = self.build_observation(state, command)
 
-        if self.counter % self.UPDATE_INTERVAL == 0:
-            self.wm_action_history = torch.cat(
-                (self.wm_action_history[1:], self.last_action.unsqueeze(0))
-            )
-            self._update_world_model(prop, depth_normalized)
+        if self.needs_depth_update:
+            self._update_world_model(prop, depth_m)
 
         with torch.no_grad():
             action = self.policy.act(obs_now, obs_history, self.wm_feature).flatten()
         if action.shape != (CTRL.NUM_ACTIONS,) or not torch.isfinite(action).all():
             raise RuntimeError(f"WMP action 无效: shape={tuple(action.shape)}")
+        action = torch.clamp(action, -CTRL.CLIP_ACTION, CTRL.CLIP_ACTION)
 
+        # 训练 runner 每个 policy step 都写入动作历史，RSSM 每五步一次性消费
+        # 连续的 [a0, a1, a2, a3, a4]；不能只在 world-model 更新帧写一次。
+        self.wm_action_history = torch.cat(
+            (self.wm_action_history[1:], action.unsqueeze(0))
+        )
         self.last_action = action.clone()
         self.counter += 1
         return action.numpy(), self.action_to_motor_command(action.numpy())

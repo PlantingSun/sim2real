@@ -87,10 +87,10 @@
 
 - 已完整核对 simtosim 的 WMP 控制器、网络结构、world-model 配置、Isaac Gym 训练环境、播放入口和 ROS1 主循环的职责边界。
 - 已确认 WMP checkpoint 已复制到当前项目 `models/go2wwmp/model_1750.pt`，约 303.2 MiB，包含 `model_state_dict`、`world_model_dict` 以及训练恢复用的优化器/深度预测器状态；该权重被 `.gitignore` 忽略。
-- 已发现需要在移植测试中明确区分“训练时深度归一化”和 simtosim ROS 控制器当前的 `depth - 0.5` 处理：训练环境输出 `[0, 1]`，world-model 的卷积编码器内部再减 `0.5`；若控制器先减一次再送入 encoder，会形成额外偏移。这是 pipeline 审查重点，不能无提示地掩盖。
+- [后续复审已修正] 当时怀疑 ROS controller 的 `depth - 0.5` 是额外偏移；2026-09-04 核对训练环境后确认该偏移必须保留。
 - 第一次移植检查暴露并修正两个 simtosim→CPU 兼容问题：内部 `MLP` 默认 device 为 `cuda`，以及 PyYAML 将 `1e-4` 解析为字符串；适配层已分别强制 CPU 默认和递归转换数值字符串。
 - 已新增 `policy/controller_go2wwmp.py` 与 `scripts/simulation/test_mujoco_pipeline_go2wwmp.py`；checkpoint 严格加载、无窗口单步和 6 周期推理均通过。
-- 已确认 WMP 的默认训练深度语义为 `[0,1]`，world-model encoder 内部再减 `0.5`；复现 simtosim ROS 额外减法时，第二次 world-model 更新后的动作与训练模式最大差异约 `0.057`。
+- [后续复审已修正] 当时把 `[0,1]` 误判为最终训练输入；真实训练输入在进入 encoder 前已经是 `[-0.5,0.5]`。
 - 当前 MuJoCo Viewer/Renderer 仍受本机 `DISPLAY=:1` 无法打开和 OpenGL context 不可用限制，未宣称实际窗口闭环通过；代码路径待在有图形桌面的 Orin/笔记本上运行验证。
 - 已完成 Orin 入门文档精简：本地显示器/键鼠为主线，SSH/文件传输和联网安全保留为备用；没有删除现场设备档案。
 - 已通过 `git diff --check`、新入口 Python 编译检查和 `--help` 检查；没有执行任何 DDS、LowCmd、Sport Mode 或真实机器人操作。
@@ -105,7 +105,7 @@
 
 - WMP 默认 checkpoint 已改为当前项目 `models/go2wwmp/model_1750.pt`；旧 `go2w`/`go2wcr` 权重从 Git 索引移除但保留在本地，便于既有离线测试继续使用。
 - 共享 `go2w.xml`、WMP pipeline 和 go2w D435i viewer 标记统一使用基座坐标 `[0.34, -0.0375, 0.09]`。
-- 删除旧 ROS 深度偏移入口；WMP 固定接收训练语义的 `[0, 1]` 深度图。MuJoCo pipeline 增加 OpenCV 黑白灰度深度窗口，按 50 Hz 策略的每五帧约 10 Hz 更新。
+- [后续复审已修正] 该轮曾删除必要的深度偏移；2026-09-04 已改为 controller 接收米制深度并恢复训练语义的中心化。OpenCV 窗口仍按 10 Hz 深度更新显示。
 - 共享 `go2w_scene.xml` 增加沿 `+x` 的 5 级上行/5 级下行楼梯，每级高 `0.12 m`、深 `0.25 m`、宽 `0.60 m`；最后一级与地面齐平，避免重叠碰撞体。
 - 已通过本地 checkpoint `--check-only`、Python 编译、OpenCV 导入和 MuJoCo XML 加载检查；实际 viewer 仍需在有图形桌面的机器上由用户观察。
 - 已将共享 XML 中 `depth_camera` 的光轴调整为沿 `+x` 向下 5°；位置保持 `[0.34, -0.0375, 0.09]`，并通过 MuJoCo 相机矩阵检查俯角为 `5.0°`。
@@ -119,3 +119,21 @@
 - 移除 VS Code 设置中的固定 Conda 解释器路径，迁移到其他设备后由用户选择目标设备的 Python 环境。
 - 已在 `/tmp` 作为当前目录时通过本地 SDK/CRC 导入、MuJoCo 场景加载、go2w 离线策略、go2wcr 离线策略、WMP `--check-only` 和 `setup.sh robot` 检查；全程未初始化 DDS 或发送机器人指令。
 - 项目文件自包含不等于运行环境自包含：目标设备仍需准备匹配架构的 Python、CycloneDDS、NumPy、PyTorch、OpenCV 和 MuJoCo；`.pt` 权重按既有规则另行复制。
+
+## 2026-09-04 Go2WWMP simulation pipeline 复审
+
+- 开始重新审计 `/home/robot/simtosim/src` 与当前项目的完整深度链路。
+- 已确认工作区开始时为干净状态；本轮将保留现有架构边界，不执行任何实机通信。
+- 已读取当前 WMP controller/pipeline 与 simtosim ROS controller/MuJoCo 发布端，开始建立训练—仿真—部署的深度数值链路对照。
+- 已定位深度中心化、5 帧动作历史、yaw command 缩放和 WMP 启动历史四项与训练代码不一致的问题。
+- 已修复 WMP controller 与 simulation pipeline，深度接口现在明确接收“米”，controller 统一生成训练用 `[-0.5,0.5]` 图像；深度只在 10 Hz world-model 帧渲染。
+- 已新增 `tests/test_go2wwmp_pipeline.py`，5 项回归测试全部通过；相关 Python 文件编译通过。
+- 已新增 `--headless-frames` 模式，并用项目内 `model_1750.pt`、场景和 EGL 完成 6 帧真实 depth → WMP → MotorCommand → MuJoCo 闭环。
+- 已补齐训练中的一张 10 Hz 深度帧延迟与 action clip 语义；深度延迟回归测试已加入。
+- 修正 `--check-only` 的 Ctrl/DDS 初始关节顺序，并更新 WMP 指南与项目入口示例。
+- 使用默认 `model_6000.pt` 以 `vx=0.6` 完成 300 帧/6 s 无窗口闭环，base 从原点运行到 `x=4.268 m`，跨过楼梯场景范围且无 NaN/Inf。
+- WMP 网络源码与 simtosim 对比仅保留既有 CPU device 和 TensorBoard 训练日志移除两类预期差异；world-model YAML 无差异。
+- go2w/go2wcr 离线回归、WMP 6 项单元测试、全相关目录 compileall、`--help`、checkpoint 严格加载和 `git diff --check` 均通过。
+- Phase 19 完成；未运行 DDS、LowCmd、Sport Mode 或任何真实机器人控制。
+- 用户确认可使用 `model_5500.pt` 或 `model_6000.pt`；两者均完成 strict load 和 6 帧 EGL 闭环。
+- 新增 `guide/12_go2wwmp_pipeline_review.md`，详细记录深度 `clip(depth_m,0,2)/2-0.5`、encoder 二次减法、无效值、100 ms 延迟、动作历史和模型对照方法。

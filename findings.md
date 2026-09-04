@@ -131,7 +131,7 @@
 
 - 用户已将 WMP checkpoint 放入当前项目 `models/go2wwmp/model_1750.pt`；由于 `*.pt` 已加入 `.gitignore`，旧的 Git 跟踪权重应从索引移除但保留本地文件，避免破坏现有 go2w/go2wcr 离线运行。
 - D435i/WMP 相机位置已统一为基座坐标 `[0.34, -0.0375, 0.09]`，包括共享 XML 相机、WMP pipeline 和 go2w 可视化标记。
-- simtosim ROS 控制器的额外 `depth - 0.5` 仅作为历史 bug 记录，不再进入当前 controller 或测试参数；WMP 始终采用训练语义深度 `[0,1]`，由 encoder 内部减 `0.5`。
+- [已由 2026-09-04 逐行复审修正] 先前曾把 ROS controller 的 `depth - 0.5` 判作额外偏移；训练环境源码证明该偏移属于 checkpoint 的真实输入语义，当前 controller 已恢复。
 - WMP 仿真测试将加入约 10 Hz 的 OpenCV 深度图窗口；窗口显示不参与策略计算，策略仍保持 50 Hz。
 - 台阶将加入共享的 `go2w_scene.xml`：沿基座 `+x` 放置，宽度沿 `y` 为 `0.60 m`，每个踏步深度 `0.25 m`、高度差 `0.12 m`，连续五级上升后五级下降；机器人从原点朝台阶前进。
 
@@ -142,3 +142,26 @@
 - 当前 Go2W MuJoCo 资源位于 `/home/robot/test_com_ws/src/descriptions/go2w_description`，约 46 MB；当前入口实际需要 `mjcf/go2w.xml`、`mjcf/go2w_scene.xml` 和 `meshes/*.stl`，而不是 ROS/DAE/URDF 全套资源。
 - SDK 源码仍导入 `cyclonedds`，并依赖 Python 解释器、NumPy、OpenCV、PyTorch、MuJoCo 等运行时包；复制 SDK 源码不能替代这些系统/环境依赖。
 - 迁移方案：在项目内增加 `third_party/unitree_sdk2_python/` 和 `assets/go2w_description/`，入口默认路径基于项目根目录解析；仿真/离线模式不初始化 DDS，实机模式仍需用户审查网络接口后执行。
+
+## 2026-09-04 Go2WWMP 深度链路复审（已完成）
+
+- simtosim MuJoCo 发布端 `go2w_mujoco.py` 的原始路径是：`Renderer.render()` → clip 到 `[0, 2] m` → 除以 `2` → 以 `32FC1` 发布，因此 ROS 消息中的数值语义为 `[0, 1]` 的 2 m 归一化深度。
+- simtosim 旧 `ControllerGo2wWMP.CallbackDepth()` 随后执行 `depth - 0.5`，把消息变为 `[-0.5, 0.5]`；训练环境源码确认该行为是 checkpoint 所需语义。
+- 修复前的 `render_depth()` 会把 NaN/+Inf 当作 2 m、-Inf 当作 0 m，再裁剪归一化；controller 则要求输入已经是有限的 `[0,1]`。修复后 renderer 只返回米制深度，controller 把所有非有限值按远平面处理并统一生成训练输入，且已有独立回归测试。
+- 训练环境 `Go2wWMP.normalize_depth_image()` 明确执行 `(depth_m / 2) - 0.5`，所以 world-model 收到的是 `[-0.5, 0.5]`，而不是 `[0,1]`。Dreamer `ConvEncoder.forward()` 还会再执行 `obs -= 0.5`；无论这项网络内部设计是否理想，部署必须匹配训练 checkpoint 的真实输入分布。
+- 因而 simtosim 旧 ROS controller 的 `depth - 0.5` 与训练数据一致；当前 sim2real controller/pipeline 省略该中心化是确定的输入分布偏移 bug。修复应建立清晰的单一边界：pipeline 产生米制深度，controller 负责按训练配置做裁剪和中心化，避免调用方把“已归一化”误当“网络输入”。
+- 训练相机是 64×64、水平 FOV 58°，安装 pitch 在 `[-10°, 0°]` 随机化；当前 MuJoCo 方形相机 `fovy=58°`，因此水平 FOV 也为 58°，固定 -5° 位于训练范围中。
+- RSSM `obs_step()` 在首帧会在 `prev_state is None` 时把 prev_action 强制置零，因此当前首帧传入的 80 维零动作不会改变初始化行为。
+- 修复前 controller 只在 `counter % 5 == 0` 时向 `wm_action_history` 写入一次 `last_action`，第二次更新实际给出 `[0,0,0,0,a4]`；现已改为每个 policy step 记录动作，RSSM 收到 `[a0,a1,a2,a3,a4]`。
+- 训练观测对 yaw command 使用 `commands_scale[2] = obs_scales.ang_vel = 0.25`；修复前 WMP controller 与 simtosim 旧 ROS controller 均遗漏，当前移植层已按训练分布补齐。
+- 训练环境在策略前把观测裁剪到 `[-100,100]`；当前 controller 已增加完整 prop 的 finite 检查和同范围裁剪，阻止 NaN/Inf 或异常速度污染策略状态。
+- 训练 runner/playback 的策略历史初始化为全零，再只插入当前一帧观测；修复前 WMP `reset()` 把全部 5 帧 gravity 预填成 `-1`，当前已恢复“4 帧零 + 1 帧当前观测”的训练语义，未改动 go2w/go2wcr controller。
+- 当前项目场景可在 `MUJOCO_GL=egl` 下无窗口渲染真实 depth buffer；站立姿态得到 64×64 float32 米制深度，范围约 `0.634–40.001 m`。上方无命中/远景接近 40 m、下方地面约 0.824 m，说明 Renderer 输出是米制距离且图像上下方向符合“上方远、下方近”；送入网络前必须裁剪到 2 m。
+- XML 相机在站立姿态下的基座局部光轴实测为约 `[0.9962, 0, -0.0872]`，即沿 `+x` 向下 5°；位置 `[0.34,-0.0375,0.09]`、方形画面的 `fovy=58°` 均与当前训练配置一致。
+- 修复后的真实 checkpoint + EGL 集成闭环已运行 6 个 50 Hz policy 帧，分别在第 1、6 帧渲染/更新深度；相机检查、world model、Actor、MotorCommand 回写和 MuJoCo 物理步均成功，状态保持有限。
+- 训练 `depth_buffer` 长度为 2，更新后通过 `[:, -2]` 选择上一张图；除首次初始化两张相同图外，world model 实际消费约 100 ms 前的 10 Hz 深度。当前 controller 已显式保留上一张预处理深度以复现该延迟。
+- 训练环境在执行物理前把 Actor action 裁剪到 `[-100,100]`；当前 controller 也在写入 RSSM 动作历史和转换 MotorCommand 前应用相同裁剪。
+- 原 `--check-only` 用 Ctrl 顺序的初始关节数组直接构造了声明为 DDS 顺序的 `RobotState`，导致 controller 再映射后得到错误站姿；现已先用 `DDS_IDX_FROM_CTRL` 转换，离线单步与真实 driver 接口一致。
+- Dreamer `ConvEncoder.forward()` 会执行原地 `obs -= 0.5`，而 `torch.as_tensor(numpy_array)` 共享底层内存。增加延迟缓存时若直接返回缓存数组，缓存会被修改并在下一次再减 0.5；当前 `_select_delayed_depth()` 对保存值和返回值都显式复制，避免重复中心化。
+- 工作区当前 WMP 默认 checkpoint 已切换为 `model_6000.pt`，本地另有 1750/3500/5500；保留该默认选择并同步 README/guide，100 帧集成验证使用 6000 严格加载通过。
+- `model_6000.pt` 在 `vx=0.6 m/s` 下完成 300 个 policy 帧（6 s 仿真）的 EGL 闭环，最终 base 约为 `[4.268, 0.227, 0.396] m`。机器人从 x=0 越过了场景楼梯所在的 x=0.8–3.3 m 区域，过程中 60 次深度更新、策略动作和 MuJoCo 状态均保持有限；实际姿态细节仍需 viewer 人工观察。
