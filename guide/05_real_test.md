@@ -8,6 +8,10 @@
 当前先完成普通 Go2W policy 的实机验证。宇树原装遥控器和最终通过标准保留在文档后部，
 暂不进行。
 
+默认仍使用已经验证过的 Python DDS 后端。Orin 上新增的 C++ DDS 独立进程属于实验后端，
+必须先按 `guide/16_cpp_dds_bridge.md` 完成构建、只读和 print-only 测试；不要直接跳到真实
+policy 输出。实验入口是在原命令中增加 `--dds-backend cpp`。
+
 ## 一、每次测试前的准备
 
 进入项目并加载机器人环境：

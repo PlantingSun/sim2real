@@ -1,6 +1,12 @@
 # sim2real — Go2W 笔记本 / Orin NX Sim-to-Real 部署
 
-Unitree Go2W 机器人 sim-to-real 控制系统。不使用 ROS/ROS2，纯 Python + PyTorch。
+Unitree Go2W 机器人 sim-to-real 控制系统。不使用 ROS/ROS2，主控制使用 Python + PyTorch。
+
+当前机载任务为 **D435i 深度采集与 DDS 发布**，策略推理在笔记本运行。
+先看 [交付说明与实时查看方法](guide/21_depth_delivery_quickstart.md)。
+机载服务与自启动见 [深度服务指南](guide/18_d435i_depth_service.md)，
+笔记本接入见 [接收接口文档](guide/19_depth_laptop_integration.md)，
+已实测结果与待验收事项见 [验证记录](guide/20_depth_validation_record.md)。
 
 ## 架构
 
@@ -59,6 +65,12 @@ go2wwmp 的网络、深度输入和 MuJoCo pipeline 验证见
 
 笔记本/Orin 同观测精度比较、抖动日志结论和单进程消融步骤见
 [`guide/14_laptop_orin_ablation.md`](guide/14_laptop_orin_ablation.md)。
+DDS Python 开销、500 Hz LowCmd 定时语义和下一步测量方案见
+[`guide/15_dds_lowcmd_research.md`](guide/15_dds_lowcmd_research.md)。
+C++ DDS 独立进程的实验架构、构建和逐级实机验证见
+[`guide/16_cpp_dds_bridge.md`](guide/16_cpp_dds_bridge.md)。
+Go2W actor 的 ONNX 导出、真实 observation 一致性检查和延时基准见
+[`guide/17_onnx_policy_latency.md`](guide/17_onnx_policy_latency.md)。
 
 ## Orin NX 环境
 
@@ -79,8 +91,9 @@ go2w/go2wcr 已在 25W 模式通过 50 Hz CPU 延时门槛；WMP 的周期性 wo
 
 当前管线不依赖 ROS2；旧 `simtosim_ws` 的 ROS 节点应使用它自己的环境。
 
-D435i 在 Orin NX 本地图形桌面采集和显示的只读流程见
-[`guide/10_realsense_network_view.md`](guide/10_realsense_network_view.md)。该流程不接入机器人控制。
+D435i 本地 Viewer 的历史检查流程见
+[`guide/10_realsense_network_view.md`](guide/10_realsense_network_view.md)。当前采用独立深度服务；
+打开 Viewer 前先停止相机服务，避免设备占用冲突。
 
 如果还没有使用过机载 Orin NX，请先阅读
 [`orin_nx_onboarding/README.md`](orin_nx_onboarding/README.md)，从硬件连接和登录开始。

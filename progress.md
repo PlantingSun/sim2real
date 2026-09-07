@@ -266,3 +266,64 @@
   `.gitignore` 和 `logs/real/`，不包含提交或推送。
 - 四个原始 CSV 使用 Python `csv` 默认 CRLF；没有为格式检查改写数据，新增
   `.gitattributes` 将其标为 binary，确保 Git 原样保存且不展开巨量逐行 diff。
+
+## 2026-09-04 DDS 与 500 Hz LowCmd 研究
+
+- 完整检查项目内 Unitree SDK2 Python 的 ChannelPublisher、ChannelSubscriber、BQueue、
+  RecurrentThread、CRC 和 CycloneDDS 0.10.2 序列化路径。
+- 只运行离线 IDL 基准，没有创建 DDS participant 或发送 LowCmd。Orin 上 LowState
+  反序列化与 LowCmd 填充/CRC/序列化平均合计约 `1.30 ms`，500 Hz 的 2 ms 预算有限。
+- 核对官方 Python/C++ Go2W 示例和 Unitree RL Lab：目标 topic 与 500 Hz 频率一致；
+  C++ 实现使用队列 1、C++ 实时发布并检查其他 LowCmd 发布者。
+- 只读确认 25W mode 3、8 核 `schedutil`、`eth0` IRQ 当前落在 CPU0；没有据此直接修改
+  功耗、governor、IRQ 或线程优先级。
+- 新增 `guide/15_dds_lowcmd_research.md`。下一步是在现有 driver 中加入纯内存 LowCmd
+  周期、CRC/Write 和 action 首次应用延迟统计，退出时一次性报告。
+
+## 2026-09-04 C++ DDS 独立进程实验后端
+
+- 新增 `cpp/go2w_dds_bridge.cpp` 和 CMake 构建：C++ 独立持有 DDS，500 Hz 线程默认绑定
+  CPU1，并在退出时报告发送间隔、CRC、Write 和丢包统计。
+- 新增 `CppDdsDriver`，通过匿名管道复用现有 DriverBase；现有 policy、手柄、日志和阶段
+  按键无需复制。
+- `test_policy_real.py` 增加显式 `--dds-backend cpp`，默认仍为 `python`。
+- 新增只读入口和一次性 Sport RPC helper；完整顺序写入 `guide/16_cpp_dds_bridge.md`。
+- 已通过 C++ Release 编译、Python 语法、协议尺寸和跨语言 CRC 检查；没有启动 DDS。
+- 用户只读验证 CPU1 达到 `500.01 Hz`、最大间隔 `4.65 ms`，且 `writes=0`、无状态丢包；
+  CPU5 出现 `17.45 ms` 尖峰，因此后续固定 CPU1。
+- 增加 LowCmd 发布者状态回传，并消除 C++ 两条启动信息的并发交错。
+- 用户完成更新版 CPU1 五秒复测：`500.02 Hz`、最大间隔 `2.78 ms`、无超过 3 ms 周期、
+  `late=0`、`state_drops=0`、`other_lowcmd=0`，允许进入 C++ print-only 吊架测试。
+- 两次 print-only 都在 ReleaseMode 前安全停止且 `writes=0`；第二次确认 Sport Mode 在
+  站稳后仍持续发布，说明 500 ms 窗口仍无法区分内置控制器。
+- 冲突检测已移到接管后：C++ 记录自身最近 16 个 CRC，20 ms 交接期后仅把未知 CRC 判为
+  并发发布者。ReleaseMode 前的 Sport 流量单独标记为 `prearm_lowcmd`。
+- 用户完成 C++ print-only 接管：8830 次 Write，平均周期 `2.00061 ms`；Write+CRC 平均
+  约 `0.1643 ms`，无失败、丢包或并发发布者。最大周期 `8.58 ms`，仅一次超过 5 ms。
+- 周期统计已限定为 ARM 后实际发布阶段，不再混入 StandUp、吊起和按键等待时间。
+- 用户完成 C++ 真实 policy 测试，机器人仍与 Python 后端一样持续高频抖动。
+- 离线分析 `policy_cpp.csv`：固定预热安静，policy 接管后立即形成约 `8.4 Hz` 振荡；
+  50 Hz policy、LowState tick、C++ 500 Hz Write 和 observation/action 数值均正常。
+- Phase 27 结束：此前把 Python DDS/GIL 视为主因的判断被实测否定，不再扩展 DDS bridge。
+
+## 2026-09-04 Go2W ONNX 延时测试
+
+- 将 ONNX/ONNX Runtime CPU 依赖安装到项目 `.venv` 并写入 Orin 锁文件，没有修改系统 Python。
+- 新增离线导出/基准脚本；生成 `models/go2w/model_700.onnx`，模型文件继续由 Git 忽略。
+- 用真实 observation 检查 500 帧，最大 action 误差 `4.77e-7`。
+- ONNX 完整帧均值/P99 为 `1.204/1.295 ms`，policy Pipe 往返为 `1.878/2.071 ms`；
+  PyTorch 对照分别为 `1.809/1.976 ms` 和 `2.507/2.714 ms`。
+- 实机入口增加显式 `--policy-backend onnx` 和 `--main-cpus`，默认 PyTorch 行为不变。
+- 下一步由用户按 `guide/17_onnx_policy_latency.md` 只运行 print-only，先判断实际
+  state→action 是否达到平均 3.0 ms、P99 4.5 ms，再决定是否发送 ONNX policy action。
+
+## 2026-09-07 D435i 独立深度链路
+
+- 用户决定策略继续在笔记本运行，机载仅采集、处理并通过独立 DDS 发送深度；此前机载推理优化暂停。
+- 新增 C++ librealsense/CycloneDDS 发布器、共享 IDL、Python 最新帧接收器、诊断/验收/快照工具。
+- 相机线缆及库安装问题由用户排查后恢复枚举；现场仍为 USB2，采用 480×270@60。
+- 目标 58°×58°、64×64 米制深度；当前底部一行无传感器覆盖，显式标无效并填 2 m。
+- 编译、几何数值、DDS C++/Python 互通、超时及进程重启测试通过；60 秒真实同机收发最低窗口
+  59.8256 Hz、最大间隔 36.1856 ms、零帧号缺口及重复。
+- 15:50:59 CST 开机服务已安装并启用；30 分钟持续测试占用相机时服务通过锁避免竞争并重试。
+- 当前详细指南与现场待验收项见 guide/18–20；30 分钟结果、服务接管与实际跨机验收分开记录。

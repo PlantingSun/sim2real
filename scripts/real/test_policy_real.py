@@ -21,7 +21,6 @@ import tty
 
 import numpy as np
 
-from driver.dds_driver import DdsDriver
 from driver.driver_base import MotorCommand
 from policy.process_worker import run_go2w_policy
 from config.go2w_config import CTRL, DDS, DDS_IDX_FROM_CTRL
@@ -143,8 +142,18 @@ def main():
     parser.add_argument("--vx", type=float, default=0.0, help="前进速度 m/s")
     parser.add_argument("--vy", type=float, default=0.0, help="侧向速度 m/s")
     parser.add_argument("--vyaw", type=float, default=0.0, help="转向速度 rad/s")
-    parser.add_argument("--model", type=str, default=model_path("go2w/model_700.pt"))
+    parser.add_argument("--model", type=str, default=model_path("go2w/model_800.pt"))
+    parser.add_argument("--policy-backend", choices=("torch", "onnx"), default="torch",
+                        help="policy 推理后端；默认保持 PyTorch")
+    parser.add_argument("--onnx-model", default=model_path("go2w/model_700.onnx"),
+                        help="ONNX actor 路径")
     parser.add_argument("--interface", type=str, default=DDS.DEFAULT_NET_IF)
+    parser.add_argument("--dds-backend", choices=("python", "cpp"), default="python",
+                        help="DDS 后端；cpp 是独立 C++ 实验后端")
+    parser.add_argument("--cpp-bridge", default="build/cpp/go2w_dds_bridge",
+                        help="C++ DDS bridge 可执行文件")
+    parser.add_argument("--main-cpus", type=str, default="",
+                        help="主进程 CPU 列表；留空保持原行为")
     parser.add_argument("--policy-cpus", type=str, default="2", help="policy 子进程 CPU 列表")
     parser.add_argument("--lowcmd-cpu", type=int, default=1, help="500Hz LowCmd 线程绑定的 CPU")
     parser.add_argument("--torch-threads", type=int, default=1, help="PyTorch intra-op 线程数")
@@ -157,14 +166,43 @@ def main():
     args = parser.parse_args()
     if args.torch_threads < 1 or args.warmup < 0 or args.rate <= 0:
         parser.error("torch-threads/rate 必须为正数，warmup 不能为负数")
+    if args.policy_backend == "onnx" and not Path(args.onnx_model).is_file():
+        parser.error(f"找不到 ONNX actor: {args.onnx_model}")
+    allowed_cpus = os.sched_getaffinity(0)
+    main_cpus = {int(value) for value in args.main_cpus.split(",")} if args.main_cpus else None
     policy_cpus = {int(value) for value in args.policy_cpus.split(",")} if args.policy_cpus else None
-    if policy_cpus and not policy_cpus.issubset(os.sched_getaffinity(0)):
+    if main_cpus and not main_cpus.issubset(allowed_cpus):
+        parser.error(f"main CPU 不可用: {sorted(main_cpus)}")
+    if policy_cpus and not policy_cpus.issubset(allowed_cpus):
         parser.error(f"policy CPU 不可用: {sorted(policy_cpus)}")
+    if args.lowcmd_cpu not in allowed_cpus:
+        parser.error(f"LowCmd CPU 不可用: {args.lowcmd_cpu}")
+    if main_cpus and policy_cpus and main_cpus & policy_cpus:
+        parser.error("main-cpus 与 policy-cpus 必须分开")
+    if main_cpus and args.lowcmd_cpu in main_cpus:
+        parser.error("main-cpus 与 lowcmd-cpu 必须分开")
+    if policy_cpus and args.lowcmd_cpu in policy_cpus:
+        parser.error("policy-cpus 与 lowcmd-cpu 必须分开")
+    if main_cpus:
+        # 在创建 DDS/日志线程和子进程前绑定；它们会继承主进程的 CPU。
+        os.sched_setaffinity(0, main_cpus)
 
-    print(f"=== Go2W 实物部署 === control={args.control}")
+    print(
+        f"=== Go2W 实物部署 === control={args.control} "
+        f"policy={args.policy_backend}"
+    )
+    print(
+        f"[CPU] main={sorted(os.sched_getaffinity(0))} "
+        f"lowcmd={args.lowcmd_cpu} policy={sorted(policy_cpus) if policy_cpus else 'default'}"
+    )
 
     # 1. 初始化 DDS 通信；此时不会发布任何 LowCmd。
-    driver = DdsDriver(args.interface, lowcmd_cpu=args.lowcmd_cpu)
+    if args.dds_backend == "cpp":
+        from driver.cpp_dds_driver import CppDdsDriver
+        driver = CppDdsDriver(args.interface, args.lowcmd_cpu, args.cpp_bridge)
+    else:
+        from driver.dds_driver import DdsDriver
+        driver = DdsDriver(args.interface, lowcmd_cpu=args.lowcmd_cpu)
     if not driver.initialize():
         print("✗ 驱动初始化失败")
         return
@@ -223,7 +261,8 @@ def main():
         policy_conn, child_conn = context.Pipe()
         policy_process = context.Process(
             target=run_go2w_policy,
-            args=(child_conn, args.model, policy_cpus, args.torch_threads),
+            args=(child_conn, args.model, policy_cpus, args.torch_threads,
+                  args.policy_backend, args.onnx_model),
         )
         policy_process.start()
         child_conn.close()

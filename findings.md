@@ -351,3 +351,79 @@
 - 4.8 在 Orin 上短暂表现较好的历史观察已按用户说明降级，不能用来证明 Orin 链路可靠。
   当前最高优先级是直接测量 500 Hz start interval、CRC/Write 耗时、漏周期/补跑和新
   action 首次下发延迟，而不是继续比较 50 Hz 平均频率。
+
+## 2026-09-04 DDS 与 LowCmd 路径研究
+
+- Orin 离线 5000 次基准：LowState 反序列化平均 `0.5817 ms`、状态回调数据复制
+  `0.0258 ms`、LowCmd 填充和 CRC `0.2607 ms`、LowCmd CDR 序列化 `0.4274 ms`。
+  合计约 `1.30 ms/2 ms`，尚不包含 DDS take/write、锁、检查、内核发送和调度等待。
+- CycloneDDS Python 的 `DataWriter.write()` 每次都会先执行 IDL `serialize()`；因此
+  `_pub.Write()` 不是一个可忽略的纯网络调用，必须单独测量其 P95/P99/最大耗时。
+- Unitree Python `RecurrentThread` 使用 timerfd，但读取后没有解包累计过期次数；此前
+  10 秒总写入约 5000 次不能排除长空档和紧邻执行。
+- 官方 C++ Go2/Go2W 示例使用 2 ms 发布线程和 LowState 队列长度 1；当前官方 RL 部署
+  还会在启动时订阅 `rt/lowcmd` 检查其他发布者。当前项目尚未实现后者。
+- 当前 Orin 为 25W mode 3、`schedutil`；`eth0` IRQ effective affinity 为 CPU0，当前
+  LowCmd CPU1 与 policy CPU2 没有直接占用该 IRQ 核。空闲快照不能替代实机同场测量。
+- 下一步只增加内存时序统计，退出时统一报告；不先改变 LowCmd、policy 或安全行为。
+
+## 2026-09-04 C++ DDS 独立进程原型
+
+- 本机已有 `/usr/local/include/unitree`、C++ Go2 IDL 和 Unitree SDK 静态库，无需安装 ROS2
+  或下载新依赖即可构建。
+- 新增实验 C++ bridge：LowState 解码、LowCmd 组包/CRC/DDS Write 和 500 Hz 绝对时钟均
+  离开 Python/GIL；Python 与 C++ 只交换 280/344 字节固定包。
+- C++ SDK 必须加载 `/usr/local/lib/libddsc.so.0`；Python SDK 继续加载 `.venv/lib` 的
+  CycloneDDS 0.10.2。子进程单独设置动态库路径，避免两套 ABI 混用。
+- 默认 LowCmd 的 C++/Python CRC 都是 `115701709`，包含非零 q/dq/tau/kp/kd 的测试向量
+  两端也同为 `73953690`；C++ Release 构建和 Python 语法检查通过，未运行实机控制。
+- 原 `test_policy_real.py` 默认行为未变；只有显式增加 `--dds-backend cpp` 才启用新后端。
+  首个现场步骤是 `test_cpp_dds_bridge.py` 只读检查，此时退出摘要必须为 `writes=0`。
+- 用户完成两组只读测试：CPU1/CPU5 的接收率为 `500.01/499.93 Hz`，最大循环间隔为
+  `4.65/17.45 ms`。两组均 `writes=0`、`state_drops=0`，后续选择 CPU1。
+- 首轮增加了 LowCmd 冲突回传；随后实测证明不能在 ReleaseMode 前仅凭 topic 活跃判定
+  外部发布者，因为机器人自己的 Sport Mode 也持续发布 `rt/lowcmd`。
+- 更新后的 CPU1 五秒复测为 `500.02 Hz`，最大间隔 `2.78 ms`，没有超过 3 ms 的周期、
+  late、紧邻周期或状态丢包，并确认控制前 `other_lowcmd=0`。
+- 前两次 print-only 均被旧保护在 ReleaseMode 前拦截，`writes=0`。第二次证明 Sport Mode
+  在站稳后仍持续发布，500 ms 活跃窗口也会误报。
+- 当前检测移至接管后：ReleaseMode 返回后立即发送固定 LowCmd，保留最近 16 个自身 CRC；
+  20 ms 交接期后若收到未知 CRC，才判定并发发布者并阻尼退出。`prearm_lowcmd` 只记录
+  内置 Sport 流量，`other_lowcmd` 专指接管后的冲突。
+- C++ print-only 已完成实际接管：8830 次 Write 的循环平均 `2.00061 ms`，最大
+  `8.58 ms`，超过 3/5/10 ms 为 `6/1/0`；Write 平均 `0.1236 ms`，CRC 平均
+  `0.0407 ms`。失败、状态丢包和并发发布者均为零。
+- C++ CRC+Write 平均约 `0.1643 ms`，仅占 2 ms 预算约 8.2%；相较 Python 路径具有明显
+  更大余量，但仍观察到极少量操作系统调度尖峰。后续统计只覆盖 ARM 后发布阶段。
+- C++ 真实 policy 日志共 533 帧：150 帧固定姿态预热的 gyro RMS 为 `0.00884`，383 帧
+  policy 接管后的 gyro RMS 为 `0.43181`，主振荡频率约 `8.36 Hz`。C++ 与 Python 后端
+  的初始腿姿态、首帧目标和振荡频率近似相同，现场表现也相同。因此 Python DDS/GIL、
+  CRC 和 LowCmd Write 节拍不是本次振荡的主要原因。
+- C++ active policy 保持 `49.98 Hz`，state→action 平均/P99 为 `5.43/6.33 ms`；笔记本
+  稳定日志为 `2.12/3.61 ms`。当前剩余的可量化差异集中在 Orin 的 state→action 延迟。
+
+## 2026-09-04 ONNX state→action 延时消融
+
+- ARM64 CPU `onnx==1.16.1`、`onnxruntime==1.18.0` 已锁入项目环境；只使用
+  `CPUExecutionProvider`，不使用 GPU。
+- 导出图只包含训练时的 observation normalizer 和 actor，输入/输出固定为 `265→16`；
+  观测历史、last_action、关节映射和动作缩放仍复用现有 controller。
+- 真实 C++ 日志 observation 的前 500 帧中，PyTorch/ONNX action 最大绝对误差为
+  `4.7683716e-07`。
+- CPU2 单线程下，actor 均值从 `0.667 ms` 降到 `0.106 ms`，完整帧从 `1.809 ms` 降到
+  `1.204 ms`，实际 policy Pipe 往返从 `2.507 ms` 降到 `1.878 ms`。
+- ONNX 能稳定减少约 `0.63 ms` Pipe 往返，但单独不足以保证消除实机全部延迟。原架构的
+  主进程和普通 DDS/日志线程也未排除 policy CPU2；新增显式 `--main-cpus 3`，并保留
+  IRQ CPU0、LowCmd CPU1、policy CPU2，使四者分开。下一步仅运行 ONNX print-only
+  测量，不发送动作。
+
+## 2026-09-07：D435i 深度发布
+
+- 当前任务改为机载深度服务，停止扩展机载策略延时消融。新增深度代码不引用 LowCmd/Sport Mode。
+- 设备恢复后枚举到 D435I 336222074436，固件 5.13.0.55；实际是 USB2.1，不是 Type-C 外形所暗示的 USB3。
+- USB2 下 480×270 Z16 有 60 FPS，848×480 只有 10 FPS；实际内参导致 58°目标图底部一行越界。
+- 明确开放最多 2% 无效边缘的兼容选项，当前缺失比例 1/64；保持仿真射线方向，越界标无效并填远平面。
+- 既有 ROS DDS 动态库会造成符号冲突；深度启动脚本隔离并固定项目 CycloneDDS 0.10.2，RealSense 使用新装的 /usr 2.58.4。
+- 已完成 60 秒真实深度→C++ DDS→Python 同机接收，最低窗口 59.8256 Hz、最大间隔 36.1856 ms，零缺帧/重复。
+- 回调到 DDS write 前的处理时间通常约 6 ms；该指标不包括曝光、USB 或网络延迟。
+- 自启动已安装启用，长测及接管状态见 guide/20_depth_validation_record.md；不可把同机收发称为长网线/笔记本验收。

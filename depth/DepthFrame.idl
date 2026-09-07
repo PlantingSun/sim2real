@@ -1,0 +1,15 @@
+module go2w_depth {
+  @final @topic
+  struct DepthFrame {
+    unsigned long version;
+    unsigned long long session_id;
+    unsigned long long frame_id;
+    double device_timestamp_ms;
+    long timestamp_domain;
+    unsigned long long capture_monotonic_ns;
+    unsigned long long publish_monotonic_ns;
+    unsigned long long publish_unix_ns;
+    float depth_m[4096];
+    octet valid[4096];
+  };
+};

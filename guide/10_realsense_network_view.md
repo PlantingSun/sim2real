@@ -1,5 +1,9 @@
 # D435i 实机画面读取：Orin 本地图形桌面
 
+> 本文为早期 Viewer 检查记录。2026-09-07 起深度网络传输已成为主线，当前实现、启动和
+> 安装说明见 [18_d435i_depth_service.md](18_d435i_depth_service.md)，笔记本接口见
+> [19_depth_laptop_integration.md](19_depth_laptop_integration.md)。使用 Viewer 前应先停止深度服务。
+
 当前主线是在 Orin NX 的 Ubuntu 桌面直接读取和显示 D435i。相机通过 USB 连接 Orin，笔记本不直接打开相机设备，也暂不做 ROS2 跨网传图。
 
 ## 1. 先确认软件和设备

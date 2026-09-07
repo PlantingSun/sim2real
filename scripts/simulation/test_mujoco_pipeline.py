@@ -55,7 +55,7 @@ def main():
     if not driver.initialize(): return
     driver.reset_to_stand()
 
-    controller = ControllerGo2w(model_path("go2w/model_700.pt"))
+    controller = ControllerGo2w(model_path("go2w/model_800.pt"))
     controller.reset()
     if args.auto_start:
         driver._pause = False

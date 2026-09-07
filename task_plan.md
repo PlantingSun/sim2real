@@ -246,3 +246,65 @@ LowCmd 发布节拍、不完整 CPU 隔离、网卡 IRQ 竞争和第二发布者
 按用户说明降级为不可重复历史观察。最高优先级转为当前日志未覆盖的 500 Hz LowCmd
 逐周期实时性，其次为 GIL/日志 I/O、CPU/IRQ/DDS 线程布局、DVFS、DDS 环境和第二发布者。
 完整证据与八步调试路线已归档，原始实机日志也已解除 Git 忽略并附清单与哈希。
+
+## Phase 26 — DDS 与 500 Hz LowCmd 路径研究（complete）
+
+- [x] 检查项目内 Unitree Python SDK 的 DDS 收发、BQueue、timerfd、CRC 和 IDL 序列化路径
+- [x] 在不初始化 DDS 的情况下测量 Orin IDL 编解码、状态复制和 LowCmd CRC 成本
+- [x] 核对 Unitree 官方 Python/C++ Go2W 示例及 RL 实机部署的线程、队列和冲突检查
+- [x] 只读检查 Orin 功耗模式、CPU governor、当前频率和 `eth0` IRQ affinity
+- [x] 形成不改变控制行为的 LowCmd 内存统计字段与分步 A/B 顺序
+
+结果：500 Hz Python DDS 编解码和命令准备平均约占 `1.30 ms/2 ms`，实时余量有限；
+现有总写入次数不能反映长空档、Write 尾延时或 timerfd deadline miss。下一步先实现退出时
+一次性报告的内存诊断，再由实测决定是否把 DDS 收发移入更严格隔离的进程或 C++ bridge。
+
+## Phase 27 — C++ DDS 独立进程原型（complete）
+
+- [x] 确认 Orin 本机 C++ Unitree SDK、Go2 IDL、CycloneDDS 头文件和库可链接
+- [x] 实现 C++ LowState/LowCmd、CRC、500 Hz 绝对时钟、CPU 绑定和 watchdog
+- [x] 用固定大小匿名管道连接现有 DriverBase，保留 policy/手柄/日志代码
+- [x] 保留 Python 默认后端，新增显式 C++ A/B 开关和一条命令启动
+- [x] 完成 Release 构建、Python 语法、包尺寸及 C++/Python CRC 对照
+- [x] 用户运行只读 bridge，确认状态率、tick、`writes=0` 和正常退出
+- [x] 确认 Sport Mode 持续发布 LowCmd，撤销不成立的 ReleaseMode 前活跃检查
+- [x] 改为接管后用最近自身 CRC 集合识别并发 LowCmd 发布者
+- [x] 用户吊架运行 C++ print-only，记录 500 Hz RATE/WRITE 摘要
+- [x] 用户短时运行 C++ policy，与 Python 后端的抖动和 LowCmd 时序做 A/B
+
+边界：助手没有初始化 DDS、调用 Sport Mode 或发送 LowCmd。C++ 后端保持实验状态，不替换
+默认 Python 实机路径。
+
+结果：C++ LowCmd 达到约 500 Hz，Write 平均 `0.124 ms`，但真实 policy 仍产生与 Python
+后端相同的约 `8.4 Hz` 振荡。因此 Python DDS/GIL 和 LowCmd Write 节拍不是主要原因。
+
+## Phase 28 — ONNX state→action 延时消融（offline complete, field test pending）
+
+- [x] 安装并锁定 ARM64 CPU ONNX/ONNX Runtime 依赖
+- [x] 导出 Go2W `normalizer + actor` 固定形状 ONNX 图
+- [x] 用真实 observation 检查 PyTorch/ONNX action 数值一致性
+- [x] 对比 actor、完整帧和实际 policy Pipe 往返延时
+- [x] 为实机入口增加显式 ONNX 后端和主进程 CPU 绑定，默认仍保持 PyTorch
+- [ ] 用户先执行 ONNX `print-only`，只比较 state→action 延时，不发送 policy action
+
+结果：500 帧最大 action 误差 `4.77e-7`；完整帧均值从 `1.809 ms` 降到 `1.204 ms`，
+Pipe 往返均值从 `2.507 ms` 降到 `1.878 ms`。下一步只执行 `guide/17` 的 print-only，
+达到平均 `3.0 ms`、P99 `4.5 ms` 门槛后才考虑真实动作。
+
+## Phase 29 — D435i 机载深度服务（2026-09-07）
+
+用户将策略部署改回笔记本，Phase 28 及此前机载抖动消融暂停。当前主线仅为相机深度传输。
+
+- [x] 确认相机恢复枚举及实际 USB2 采集能力，记录库和线缆排查结果
+- [x] 实现 60 FPS 采集、空间滤波、64×64 米制深度及有效掩码
+- [x] 按仿真 58°视场重采样，显式记录 USB2 模式底部一行缺失
+- [x] 独立 CycloneDDS domain/topic、共享 IDL、Python 最新帧接收器
+- [x] 显式限制 DDS UDP 载荷 1400B、fragment 1280B，互通/超时/重启测试通过
+- [x] 编写机载操作指南、笔记本接口文档、实测记录和自动验收工具
+- [x] 安装启用 systemd 服务，确认 active/running 及持续真实出图
+- [ ] 完成最终服务配置 30 分钟持续测试并记录结果
+- [ ] 实际笔记本及长网线验收（需要接收端现场配合）
+- [ ] 物理安装/已知距离对齐、实际 USB/网线拔插和设备重启验收
+
+当前入口为 guide/18–20；不得把同机 DDS 接收、service enabled 或几何单元测试分别当作
+实际跨机传输、实际重启出图或实机相机外参标定已通过。

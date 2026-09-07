@@ -1,0 +1,14 @@
+{
+  "duration_s": 60.131250832000205,
+  "interface": "eth0",
+  "domain": 42,
+  "launch": "camera",
+  "partial_fov": true,
+  "spatial": true,
+  "windows": 6,
+  "min_new_frame_hz": 59.82559519635797,
+  "max_gap_ms": 36.185611,
+  "fps_pass": true,
+  "gap_pass": true,
+  "note": "Same-host receive is not proof of laptop/long-cable delivery"
+}

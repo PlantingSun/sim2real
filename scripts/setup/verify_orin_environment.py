@@ -13,6 +13,8 @@ EXPECTED_VERSIONS = {
     "cyclonedds": "0.10.2",
     "mujoco": "3.2.3",
     "numpy": "1.24.4",
+    "onnx": "1.16.1",
+    "onnxruntime": "1.18.0",
     "torch": "2.0.0",
 }
 MODEL_FILES = (
@@ -46,6 +48,8 @@ def main() -> None:
     import cv2
     import cyclonedds
     import numpy
+    import onnx
+    import onnxruntime
     import unitree_sdk2py
     import yaml
 

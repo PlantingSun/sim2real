@@ -1,6 +1,6 @@
 # scripts 目录约定
 
-脚本按“会不会连接机器人”和“验证哪一层”分为五类。所有可执行实现都放在子目录中，运行时直接调用对应分类目录内的文件。
+脚本按“会不会连接机器人”和“验证哪一层”分类。所有可执行实现都放在子目录中，运行时直接调用对应分类目录内的文件。
 
 | 目录 | 用途 | 是否连接机器人 |
 |---|---|---:|
@@ -9,6 +9,11 @@
 | `simulation/` | go2w/go2wcr/go2wwmp 的 MuJoCo 闭环测试 | 否 |
 | `input/` | 键盘、Xbox、原装遥控器输入映射检查 | 只有 `debug_unitree_remote.py` 订阅 LowState |
 | `real/` | DDS 驱动只读检查、go2w/go2wcr 实机接管 | 是 |
+| `depth/` | D435i 采集、深度 DDS 收发、验收及开机服务安装 | 仅深度话题，不发送运动指令 |
+
+深度服务单独使用 `bash scripts/depth/build.sh`、`run_publisher.sh`、`run_receiver.sh` 和
+`run_acceptance.sh`，不需 `source setup.sh robot`。机载指南见
+[`../guide/18_d435i_depth_service.md`](../guide/18_d435i_depth_service.md)。
 
 建议按以下顺序执行：
 
@@ -30,6 +35,7 @@ CRRL 对应入口：
 
 - `policy/test_policy_go2wcr_offline.py`
 - `policy/benchmark_policy_latency.py`
+- `policy/benchmark_go2w_onnx.py`：导出并离线比较 Go2W PyTorch/ONNX 延时
 - `simulation/test_mujoco_pipeline_go2wcr.py`
 - `simulation/test_mujoco_pipeline_go2wwmp.py`
 - `real/test_policy_go2wcr_real.py`

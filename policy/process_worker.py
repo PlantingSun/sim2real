@@ -11,7 +11,22 @@ from driver.driver_base import RobotState
 from policy.controller_go2w import ControllerGo2w
 
 
-def run_go2w_policy(conn, model_path, cpus=None, torch_threads=1):
+def _create_onnx_session(path, threads):
+    """延迟导入 ONNX Runtime，避免默认 PyTorch 路径新增依赖。"""
+    import onnxruntime as ort
+
+    options = ort.SessionOptions()
+    options.intra_op_num_threads = threads
+    options.inter_op_num_threads = 1
+    options.execution_mode = ort.ExecutionMode.ORT_SEQUENTIAL
+    options.graph_optimization_level = ort.GraphOptimizationLevel.ORT_ENABLE_ALL
+    return ort.InferenceSession(
+        path, sess_options=options, providers=("CPUExecutionProvider",)
+    )
+
+
+def run_go2w_policy(conn, model_path, cpus=None, torch_threads=1,
+                    backend="torch", onnx_model_path=""):
     """加载 go2w policy，并逐帧返回 DDS 顺序的 MotorCommand 数据。"""
     # Ctrl+C 由 DDS 主进程统一处理，避免子进程在推理中打印 traceback。
     signal.signal(signal.SIGINT, signal.SIG_IGN)
@@ -21,6 +36,10 @@ def run_go2w_policy(conn, model_path, cpus=None, torch_threads=1):
     torch.set_num_interop_threads(1)
     controller = ControllerGo2w(model_path)
     controller.reset()
+    onnx_session = (
+        _create_onnx_session(onnx_model_path, torch_threads)
+        if backend == "onnx" else None
+    )
     conn.send("ready")
 
     try:
@@ -41,7 +60,14 @@ def run_go2w_policy(conn, model_path, cpus=None, torch_threads=1):
                 controller.last_action.zero_()
             start = time.perf_counter()
             obs = controller.build_obs(state, command)
-            action = controller.compute_action(obs)
+            if onnx_session is None:
+                action = controller.compute_action(obs)
+            else:
+                observation = obs.numpy().reshape(1, -1)
+                action = onnx_session.run(
+                    ("action",), {"observation": observation}
+                )[0].reshape(-1)
+                controller.last_action = torch.from_numpy(action.copy())
             p, v, kp, kd = controller.action_to_motor_command(action)
             if hold_action:
                 controller.last_action.zero_()

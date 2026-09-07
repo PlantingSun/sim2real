@@ -1,0 +1,22 @@
+[Unit]
+Description=Go2W D435i depth acquisition and DDS publisher
+Wants=network-online.target
+After=network-online.target
+StartLimitIntervalSec=0
+
+[Service]
+Type=simple
+User=unitree
+WorkingDirectory=/home/unitree/sim2real
+EnvironmentFile=/home/unitree/sim2real/config/depth-service.env
+ExecStart=/bin/bash /home/unitree/sim2real/scripts/depth/run_publisher.sh --interface ${DEPTH_INTERFACE} --domain ${DEPTH_DOMAIN} --topic ${DEPTH_TOPIC} $DEPTH_EXTRA_ARGS
+Restart=always
+RestartSec=3
+TimeoutStopSec=8
+NoNewPrivileges=true
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=go2w-depth
+
+[Install]
+WantedBy=multi-user.target

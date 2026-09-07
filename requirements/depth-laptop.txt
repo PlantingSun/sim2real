@@ -1,0 +1,4 @@
+# Python 3.8-3.11; standalone depth receiving, no torch/ROS/Unitree dependency.
+cyclonedds==0.10.2
+numpy==1.24.4
+# Optional preview: use the host's existing OpenCV (cv2).
