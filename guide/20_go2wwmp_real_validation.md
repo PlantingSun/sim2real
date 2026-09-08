@@ -96,7 +96,8 @@ python scripts/real/test_policy_go2wwmp_real.py \
 深度 session 只在 LowCmd 接管前允许重新基线；接管后只要深度过期、session 改变、valid ratio 低于阈值、LowState 过期、worker 退出、推理超时、
 数值非法或观察到异常姿态，立即结束本轮。程序会在已启动 LowCmd 时进入阻尼；物理急停始终优先。
 若接管后 session 改变，错误信息会同时打印旧/新 session 和当前 frame，便于回查 Orin 服务日志。
-已知底部无效行仍代表一个感知盲区；`2 m` 远平面只避免伪造近障碍，不能证明低矮障碍一定可见。
+底行的旧有固定无效问题已改为最近真实传感器边缘采样；其余相机原生无效区域仍代表感知盲区，
+`2 m` 远平面只避免伪造近障碍，不能证明低矮障碍一定可见。
 
 ## 5. 5 秒 WMP action 短测
 

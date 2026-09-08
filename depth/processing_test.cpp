@@ -38,13 +38,19 @@ int main() {
     bool rejected = false;
     try { make_maps(intr, mx, my); } catch (const std::runtime_error&) { rejected = true; }
     check(rejected, "Insufficient FOV must be rejected");
-    rejected = false;
-    try { make_maps(intr, mx, my, true); } catch (const std::runtime_error&) { rejected = true; }
-    check(rejected, "Partial-FOV option must not allow large missing areas");
     intr.width = 480; intr.height = 270;
     intr.fx = intr.fy = 241.087f; intr.ppx = 240.835f; intr.ppy = 138.657f;
-    const float missing = make_maps(intr, mx, my, true);
-    check(std::abs(missing - 1.0f / 64) < 0.0001f, "USB2 camera has one missing bottom row");
-    check(mx.at<float>(63, 32) == -1 && mx.at<float>(62, 32) >= 0, "Missing FOV must map to invalid border");
+    const float corrected = make_maps(intr, mx, my);
+    check(std::abs(corrected - 1.0f / 64) < 0.0001f, "USB2 camera corrects one bottom row");
+    check(my.at<float>(63, 32) == 269 && my.at<float>(62, 32) < 269,
+          "Bottom target row must sample the nearest real sensor row");
+    cv::Mat source(270, 480, CV_16U, cv::Scalar(100));
+    source.row(269).setTo(777);
+    cv::Mat sampled;
+    cv::remap(source, sampled, mx, my, cv::INTER_NEAREST);
+    check(sampled.at<uint16_t>(63, 32) == 777,
+          "Corrected bottom row must preserve the original edge measurement");
+    check(sampled.at<uint16_t>(62, 32) == 100,
+          "Edge correction must not change the preceding output row");
     std::cout << "depth processing checks passed\n";
 }

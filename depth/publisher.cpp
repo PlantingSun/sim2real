@@ -32,7 +32,6 @@ struct Options {
     int domain = 42, width = 0, height = 0;
     double duration = 0;
     bool synthetic = false, diagnose = false, spatial = true, temporal = false;
-    bool allow_partial_fov = false;
     int hole_filling = -1;
 };
 static Options parse(int argc, char** argv) {
@@ -55,13 +54,12 @@ static Options parse(int argc, char** argv) {
         else if (a == "--diagnose") o.diagnose = true;
         else if (a == "--no-spatial") o.spatial = false;
         else if (a == "--temporal") o.temporal = true;
-        else if (a == "--allow-partial-fov") o.allow_partial_fov = true;
+        else if (a == "--allow-partial-fov") {} // accepted for old launch files; no longer needed
         else if (a == "--hole-filling") o.hole_filling = std::stoi(value());
         else if (a == "--help") {
             std::cout << "go2w_depth [--interface eth0] [--domain 42] [--topic rt/depth/image64]\n"
                          "  [--serial SERIAL] [--width W --height H] [--duration SECONDS]\n"
                          "  [--no-spatial] [--temporal] [--hole-filling 0|1|2] [--diagnose | --synthetic]\n"
-                         "  [--allow-partial-fov] (at most 2% invalid image border)\n"
                          "  [--snapshot PATH.yml] (one raw/processed sample and calibration)\n"
                          "Depth-only Z16 60 FPS; auto profiles: 848x480, 640x480, 480x270.\n";
             std::exit(0);
@@ -161,7 +159,7 @@ static void capture(Publisher& publisher, const Options& o, Clock::time_point en
                 p.fps() == 60 && v.width() == size.first && v.height() == size.second) {
                 // Reject nominal 60 Hz modes that cannot cover the simulation FOV.
                 cv::Mat mx, my;
-                try { go2w_depth_processing::make_maps(v.get_intrinsics(), mx, my, o.allow_partial_fov); }
+                try { go2w_depth_processing::make_maps(v.get_intrinsics(), mx, my); }
                 catch (const std::runtime_error&) { continue; }
                 width = size.first; height = size.second;
             }
@@ -194,7 +192,7 @@ static void capture(Publisher& publisher, const Options& o, Clock::time_point en
     const float scale = sensor.get_depth_scale();
     auto intr = profile.get_stream(RS2_STREAM_DEPTH).as<rs2::video_stream_profile>().get_intrinsics();
     cv::Mat mx, my;
-    const float missing_fov = go2w_depth_processing::make_maps(intr, mx, my, o.allow_partial_fov);
+    const float edge_clamped = go2w_depth_processing::make_maps(intr, mx, my);
     rs2::disparity_transform to_disparity(true), to_depth(false);
     rs2::spatial_filter spatial;
     spatial.set_option(RS2_OPTION_FILTER_MAGNITUDE, 2);
@@ -210,7 +208,7 @@ static void capture(Publisher& publisher, const Options& o, Clock::time_point en
     message.session_id = session_id();
     std::cout << "CONNECTED serial=" << serial << " usb=" << usb << " profile=" << width << 'x' << height
               << "@60 scale=" << scale << " intrinsics=" << intr.fx << ',' << intr.fy << ','
-              << intr.ppx << ',' << intr.ppy << " distortion=" << intr.model << " missing_fov_fraction=" << missing_fov
+              << intr.ppx << ',' << intr.ppy << " distortion=" << intr.model << " edge_clamped_fraction=" << edge_clamped
               << " spatial=" << o.spatial << " temporal=" << o.temporal << " hole_filling=" << o.hole_filling
               << " session=" << message.session_id << std::endl;
     auto last_log = Clock::now(), warmup_end = last_log + 1s;
@@ -264,7 +262,7 @@ static void capture(Publisher& publisher, const Options& o, Clock::time_point en
             file << "serial" << serial << "frame_id" << std::to_string(number)
                  << "depth_scale" << scale << "source_fx" << intr.fx << "source_fy" << intr.fy
                  << "source_cx" << intr.ppx << "source_cy" << intr.ppy
-                 << "missing_fov_fraction" << missing_fov << "target_fov_deg" << 58
+                 << "edge_clamped_fraction" << edge_clamped << "target_fov_deg" << 58
                  << "raw_depth_m" << raw_m << "filtered_depth_m" << filtered_m
                  << "map_x" << mx << "map_y" << my << "depth64_m" << depth_m << "valid64" << valid;
             file.release();

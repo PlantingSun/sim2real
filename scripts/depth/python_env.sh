@@ -8,7 +8,10 @@ if [ -z "${DEPTH_ROOT:-}" ]; then
 fi
 
 _depth_python_works() {
-    [ -x "$1" ] && "$1" -c 'import cyclonedds, numpy' >/dev/null 2>&1
+    [ -x "$1" ] || return 1
+    _depth_candidate_prefix="$(cd "$(dirname "$1")/.." && pwd)"
+    _depth_candidate_dds="${DEPTH_DDS_PREFIX:-${CYCLONEDDS_HOME:-$_depth_candidate_prefix}}"
+    LD_LIBRARY_PATH="$_depth_candidate_dds/lib" "$1" -c 'import cyclonedds, numpy' >/dev/null 2>&1
 }
 
 if [ -n "${DEPTH_PYTHON:-}" ]; then
@@ -57,5 +60,7 @@ export PYTHONPATH="$DEPTH_ROOT"
 unset CYCLONEDDS_URI LD_PRELOAD
 
 unset _depth_candidate
+unset _depth_candidate_dds
+unset _depth_candidate_prefix
 unset _depth_candidates
 unset -f _depth_python_works
