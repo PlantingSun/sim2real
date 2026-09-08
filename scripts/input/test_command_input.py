@@ -25,11 +25,8 @@ def main():
         ctrl_values[DDS_IDX_FROM_CTRL],
         dds_values,
     )
-    assert len(DDS.JOINT_LIMITS) == 12
-    assert all(
-        limit == {"q_min": None, "q_max": None, "dq_max": None}
-        for limit in DDS.JOINT_LIMITS
-    )
+    assert len(DDS.JOINT_LIMITS) == 16
+    assert all(limit["dq_max"] == 30.0 for limit in DDS.JOINT_LIMITS)
 
     fixed = FixedCommandSource([9.0, -9.0, 0.25]).read()
     np.testing.assert_allclose(fixed.velocity, [1.0, -1.0, 0.25])

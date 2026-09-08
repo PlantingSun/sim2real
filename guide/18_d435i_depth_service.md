@@ -3,7 +3,7 @@
 本阶段 Orin 只承担深度采集和传输，控制网络在笔记本运行。深度程序不加载策略、
 不创建 LowCmd 发布者，不调用 Sport Mode。笔记本接口见
 [19_depth_laptop_integration.md](19_depth_laptop_integration.md)，现场记录见
-[20_depth_validation_record.md](20_depth_validation_record.md)。
+[19.5_depth_validation_record.md](19.5_depth_validation_record.md)。
 
 ## 1. 当前连接与已知限制
 

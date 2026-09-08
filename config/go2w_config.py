@@ -88,21 +88,25 @@ class DDS:
     POS_STOP_F = 2.146e9
     VEL_STOP_F = 16000.0
 
-    # 12 个腿关节，顺序对应 DDS motor_state[0:12]。
-    # 由使用者逐项填写；None 表示暂不检查该字段。
+    # DDS 顺序的 16 路 q/dq 限位，数值对应 assets/go2w_description/mjcf/go2w.xml。
+    # 轮子的 MJCF q range 是无界占位值；轮速和所有 dq 均按 30 rad/s 检查。
     JOINT_LIMITS = [
-        {"q_min": None, "q_max": None, "dq_max": None},  # DDS 0
-        {"q_min": None, "q_max": None, "dq_max": None},  # DDS 1
-        {"q_min": None, "q_max": None, "dq_max": None},  # DDS 2
-        {"q_min": None, "q_max": None, "dq_max": None},  # DDS 3
-        {"q_min": None, "q_max": None, "dq_max": None},  # DDS 4
-        {"q_min": None, "q_max": None, "dq_max": None},  # DDS 5
-        {"q_min": None, "q_max": None, "dq_max": None},  # DDS 6
-        {"q_min": None, "q_max": None, "dq_max": None},  # DDS 7
-        {"q_min": None, "q_max": None, "dq_max": None},  # DDS 8
-        {"q_min": None, "q_max": None, "dq_max": None},  # DDS 9
-        {"q_min": None, "q_max": None, "dq_max": None},  # DDS 10
-        {"q_min": None, "q_max": None, "dq_max": None},  # DDS 11
+        {"q_min": -1.0472, "q_max": 1.0472, "dq_max": 30.0},       # DDS 0: FR hip
+        {"q_min": -1.5708, "q_max": 3.4907, "dq_max": 30.0},       # DDS 1: FR thigh
+        {"q_min": -2.7227, "q_max": -0.83776, "dq_max": 30.0},     # DDS 2: FR calf
+        {"q_min": -1.0472, "q_max": 1.0472, "dq_max": 30.0},       # DDS 3: FL hip
+        {"q_min": -1.5708, "q_max": 3.4907, "dq_max": 30.0},       # DDS 4: FL thigh
+        {"q_min": -2.7227, "q_max": -0.83776, "dq_max": 30.0},     # DDS 5: FL calf
+        {"q_min": -1.0472, "q_max": 1.0472, "dq_max": 30.0},       # DDS 6: RR hip
+        {"q_min": -1.0236, "q_max": 4.5379, "dq_max": 30.0},       # DDS 7: RR thigh
+        {"q_min": -2.7227, "q_max": -0.83776, "dq_max": 30.0},     # DDS 8: RR calf
+        {"q_min": -1.0472, "q_max": 1.0472, "dq_max": 30.0},       # DDS 9: RL hip
+        {"q_min": -1.0236, "q_max": 4.5379, "dq_max": 30.0},       # DDS 10: RL thigh
+        {"q_min": -2.7227, "q_max": -0.83776, "dq_max": 30.0},     # DDS 11: RL calf
+        {"q_min": -999999.0, "q_max": 999999.0, "dq_max": 30.0},  # DDS 12: FR wheel
+        {"q_min": -999999.0, "q_max": 999999.0, "dq_max": 30.0},  # DDS 13: FL wheel
+        {"q_min": -999999.0, "q_max": 999999.0, "dq_max": 30.0},  # DDS 14: RR wheel
+        {"q_min": -999999.0, "q_max": 999999.0, "dq_max": 30.0},  # DDS 15: RL wheel
     ]
     WHEEL_VEL_LIMIT = 30.0
     EMERGENCY_DAMPING_KD = 8.0

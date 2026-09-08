@@ -319,6 +319,11 @@
 
 ## 2026-09-07 D435i 独立深度链路
 
+- 收到新的阶段目标：放弃 Orin NX 上运行控制策略，转为“Orin NX 仅采集/发布深度，笔记本通过网线接收、处理并运行 go2wwmp 控制”。
+- 本轮只进行项目盘点和规划，不启动 DDS 控制、不发送 LowCmd、不调用 Sport Mode，也不运行任何实机控制入口。
+- 已恢复项目根目录现有 `task_plan.md`、`findings.md`、`progress.md`，将保留历史 Orin 调试结论，不覆盖既有记录。
+- 规划目录解析脚本直接执行时报 `permission denied`；改用 `sh scripts/resolve-plan-dir.sh` 成功解析到项目根目录，未影响文件。
+
 - 用户决定策略继续在笔记本运行，机载仅采集、处理并通过独立 DDS 发送深度；此前机载推理优化暂停。
 - 新增 C++ librealsense/CycloneDDS 发布器、共享 IDL、Python 最新帧接收器、诊断/验收/快照工具。
 - 相机线缆及库安装问题由用户排查后恢复枚举；现场仍为 USB2，采用 480×270@60。
@@ -326,4 +331,101 @@
 - 编译、几何数值、DDS C++/Python 互通、超时及进程重启测试通过；60 秒真实同机收发最低窗口
   59.8256 Hz、最大间隔 36.1856 ms、零帧号缺口及重复。
 - 15:50:59 CST 开机服务已安装并启用；30 分钟持续测试占用相机时服务通过锁避免竞争并重试。
-- 当前详细指南与现场待验收项见 guide/18–20；30 分钟结果、服务接管与实际跨机验收分开记录。
+- 当前深度交付摘要、笔记本接收和质量记录分别见 guide 18.5/19/19.5；真机 WMP 验证流程见 guide 20。
+- 已完整阅读 guide 18/18.5/19/19.5、深度 receiver/验收工具、WMP controller/simulation pipeline、现有
+  笔记本实机入口、policy worker 和 DDS driver；本轮没有运行测试或任何 DDS/机器人入口。
+- 已将 `task_plan.md` 主目标从“Orin 运行 policy”更新为“Orin 仅发布深度、笔记本运行 go2wwmp”，
+  并新增 Phase 29–34 的跨机收图、深度处理、代码集成、只读验证、吊架/地面和障碍递进门槛。
+- 识别出进入实机前的两个阻塞项：尚无 go2wwmp 笔记本实机 worker/入口；12 个腿关节 q/dq
+  安全限位当前均未配置。计划要求先解决并由用户审查，助手不得自行解锁真实动作。
+- 现有最终 MTU 同机服务记录实际约 950 秒，虽通过该区间帧率/间隔/完整性门槛，但明确标记为
+  用户提前停止，不计为 30 分钟完成。当前 Next Step 仅为实际笔记本跨机 60 秒只读收图。
+
+## 2026-09-07 笔记本深度接收验收工具
+
+- 用户批准开始 Phase 29 的第一步，要求代码覆盖：基础接收、接收并可视化、约 5 分钟稳定性、
+  以及按 go2wwmp 规定执行后处理；完成后同步更新 `guide/19_depth_laptop_integration.md`。
+- 本轮只实现和运行离线/模拟深度测试，不初始化机器人 DDS domain 0、不发送 LowCmd、不调用
+  Sport Mode；实际 Orin→笔记本链路由用户按 guide 逐步验收。
+- 新增 `depth/postprocess.py` 作为纯 NumPy 的唯一 WMP 深度转换；controller 与接收工具共同调用，
+  保持 `clip([0,2])/2-0.5` 和既有 simulation 完全一致。
+- 接收 CLI 现会在首帧立即报告 shape/dtype/范围/有效率，无帧时返回退出码 2；预览增加米制深度、
+  valid mask 和可选 WMP 输入面板；`--wmp-postprocess` 可在 NPZ 中保存 `depth_wmp`。
+- 5 分钟 acceptance 增加连续 WMP 后处理检查、`wmp_pass/wmp_failures/min/max` 汇总和末尾 120 帧
+  `depth_wmp` 保存；仍只订阅 depth domain 42。
+- `guide/19_depth_laptop_integration.md` 已改为四步现场验收：30 秒基础接收、可视化、300 秒稳定性、
+  WMP 后处理与离线图片检查。
+- 使用笔记本 `unitree_py38` 环境通过 3 项纯离线 depth 测试（2 项集成测试默认跳过）和 6 项 WMP
+  pipeline 测试；启用 Python 回环集成后共执行 4 项、仅跳过未构建的 C++ 发布器测试。
+  `git diff --check` 通过。测试未创建机器人 domain 0，也未执行机器人控制。
+- 首次启用 loopback DDS 集成测试时，CycloneDDS 因当前沙箱无法枚举 UDP 接口而初始化失败；
+  该失败发生在 domain 89 participant 创建阶段，没有启动发布器。将改用授权的本机回环测试，
+  不在相同受限环境重复，也不使用机器人 domain 0。
+- 授权后 domain 89 participant 可创建，但本机缺少面向 Orin/RealSense 的 C++ 发布器构建产物；
+  自动测试已改用 Python DataWriter。专用 domain 89 的接收、新鲜度过期、新 session 接受及 WMP
+  后处理集成测试全部通过；整个测试未访问 domain 0 或真实机器人。
+- 用户把当前跨机稳定性门槛调整为约 5 分钟；guide 19 和 Phase 29 当前门槛均采用 300 秒，
+  原 30 分钟记录保留为后续可选耐久测试。
+- 最终复测曾发现 wrapper 默认寻找不存在的项目 `.venv`，当时错误地只依赖 guide 中的手工环境变量
+  绕过，没有修复启动脚本；用户按基础命令运行后复现了该缺陷。
+- 已新增 `scripts/depth/python_env.sh`，receiver、acceptance 和离线查看 wrapper 共用自动环境解析与
+  `cyclonedds/numpy` 预检。使用清空 Conda/venv/LD/PYTHONPATH 的干净 shell，三个 wrapper 的
+  `--help` 均成功自动选择笔记本 `unitree_py38`；不再要求项目根目录存在 `.venv`。
+- receiver 的 first/final 事件现在也写入 JSONL，现场证据不再只存在于终端。
+- 使用已有真实 USB2 深度样本生成并人工检查了米制/WMP 离线预览：`(64,64)`、全有限、
+  米制范围 `0.28–2.0 m`、WMP 范围 `-0.36–0.5`，无效区域与后处理结果显示正常。
+- 用户明确 guide 不需要保留历史措辞。已将 guide 19 重写为当前可执行版本，删除旧的 30 分钟
+  可选流程、重复依赖说明和历史背景，只保留四步验收、当前数据约定、接入示例与必要排障。
+- 用户再次实测发现 `DEPTH_IF` 未设置时，guide 命令把空字符串传入 receiver，触发 Python traceback。
+  已修复：guide 先 `export DEPTH_IF`，每条现场命令使用 `${DEPTH_IF:?}` 立即阻止空值；receiver
+  对空接口名返回明确的 argparse 用法错误。空变量 shell guard、空参数入口、有效接口 `--help`
+  和全部离线/WMP 测试均通过。
+- receiver 现在只在 `DepthReceiver` 成功初始化后创建 JSONL；参数错误不会再留下 0 字节假证据。
+- 用户更习惯直接运行 Python。已将 guide 19 四步验收和离线检查全部改为 `python -m depth.receiver`
+  或 `python scripts/depth/...`；准备段显式清理电机 domain 0 的 `CYCLONEDDS_URI`，bash wrapper
+  仅作为独立调用的备用环境解析器。三个 Python `--help` 入口和未设置 `DEPTH_IF` 的 shell guard
+  已验证。
+- 已在本机回环接口、专用测试 domain 89/90 中同时创建两个 CycloneDDS participant，验证不同 domain
+  可以并存。生产对应关系应是电机 domain 0 + 深度 domain 42；当前 guide 的 `unset` 只用于深度单独
+  验收，后续双域实机入口不能把它误用成全局配置。
+
+## 2026-09-07 Go2WWMP 第 20 步真机验证入口
+
+- 用户已完成 guide 19 的四项深度接收验收；对 USB2 底部无效行的处理保持保守：无效像素继续使用
+  2 m 远平面并保留 `valid=0`，不做“填近障碍”或盲目插值；WMP 实机入口默认要求有效率至少 0.90。
+- 将旧的深度历史文档整理为 guide 18.5/19.5，并删除过时的 guide 20/21；当前 guide 20 专注于
+  domain 0 状态 + domain 42 深度 + WMP 的只读验证和固定站姿门槛。
+- 新增 `policy/process_worker_go2wwmp.py`：子进程独占深度 domain 42 和 WMP，按 100 ms 新鲜度、
+  有效率、session、有限值和推理时延检查后，通过 Pipe 返回候选 action/MotorCommand；绝不写 LowCmd。
+- 新增 `scripts/real/test_policy_go2wwmp_real.py`：`--print-only` 完全只读；`--ground-stand --arm`
+  仅在交互确认、StandUp、地面承重/保护架确认和 ReleaseMode 后发送固定 `INITIAL_JOINTS_POS`，WMP
+  action 仍只打印；状态年龄和 tick 写入 JSONL。
+- 根据首次固定站姿现场结果补充了接管前 `session_sync`：StandUp/人工安全确认等待期间若相机服务重启，
+  可在任何 LowCmd 之前重新建立深度 session 基线；LowCmd 接管后的 session 改变仍进入阻尼。
+- 用户首次固定站姿实测触发了原有 session fail-closed，已确认 StandUp、ReleaseMode 和固定 LowCmd
+  启动成功，未继续运行异常深度链路；下一次需先核对 Orin 服务日志和 `[DEPTH SYNC]` 输出。
+- 用户随后完成 `logs/real/go2wwmp_hold_stand_2.jsonl` 固定站姿测试：1500 条记录（约 30 s），
+  session 全程不变，深度有效率 `0.9224–0.9387`，深度 local age 最大 `18.59 ms`，LowState
+  age P99 `2.15 ms`，WMP 推理 P99 `7.88 ms`，10 Hz 深度更新计数为 300；候选 action 仍未发送。
+  该结果允许进入“固定初始站姿、落地保护下的 2/5/10 s 原地站立短测”，不等于允许解锁 WMP 行走。
+- 当前 JSONL 主要记录数据链路和候选输出，尚未保存完整实际 LowState 姿态/关节轨迹；后续延长
+  原地站立测试前应增加实际 q/dq/IMU 诊断字段。已将入口新名称统一为 `--ground-stand`，旧
+  `--hold-stand` 仅作为隐藏兼容别名。
+- 用户随后明确 q 限位采用项目 MJCF、所有 dq/轮速上限设为 30；已写入 16 路 DDS 映射并让驱动
+  在状态和待发送命令两侧检查。新增显式 `--enable-wmp-action`，只允许带日志、地面保护下最多
+  5 秒；当前尚未运行该真实 action 入口。离线回放 hold_stand_2 的全部候选 MotorCommand
+  均未触发这组 q/dq 限位。
+- 新增 4 项离线安全/传输测试（含严格状态包 shape/finite 校验）；本轮通过 WMP、depth transport、
+  编译、CLI help 和 domain 共存检查，
+  没有运行真实机器人入口、没有发送 LowCmd 或 Sport Mode。下一步由用户先运行 guide 20 的
+  `--print-only`，不要直接进入固定站姿。
+
+## 2026-09-07：首次 5 秒 action 现场故障与处理决定
+
+- 用户在地面承重、保护架/急停覆盖下运行 action 短测；机器人站立较稳定，但约 2 秒内出现单帧
+  `depth_valid_ratio=0.8987 < 0.9000`，程序按原规则进入阻尼，用户执行急停。该事件不是 q/dq
+  限位越界，且日志中的上一帧 valid 为 0.922。
+- 用户明确要求保留低有效率帧的真实性，不用固定站姿替代真实观测，也不降低实时感知故障门槛；
+  已撤回本轮新增的“坏帧容忍/动作回退”逻辑，恢复低于阈值立即 fail-closed。
+- 仅完成离线代码回退和测试，未再次启动任何实机控制；后续应先分析无效区域的空间分布和产生原因，
+  再由用户决定是否调整发布端或质量阈值。

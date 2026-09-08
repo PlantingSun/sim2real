@@ -3,10 +3,11 @@
 Unitree Go2W 机器人 sim-to-real 控制系统。不使用 ROS/ROS2，主控制使用 Python + PyTorch。
 
 当前机载任务为 **D435i 深度采集与 DDS 发布**，策略推理在笔记本运行。
-先看 [交付说明与实时查看方法](guide/21_depth_delivery_quickstart.md)。
+先看 [机载深度服务交付摘要](guide/18.5_depth_delivery_quickstart.md)。
 机载服务与自启动见 [深度服务指南](guide/18_d435i_depth_service.md)，
 笔记本接入见 [接收接口文档](guide/19_depth_laptop_integration.md)，
-已实测结果与待验收事项见 [验证记录](guide/20_depth_validation_record.md)。
+深度有效区域记录见 [guide 19.5](guide/19.5_depth_validation_record.md)；下一步真机验证见
+[guide 20](guide/20_go2wwmp_real_validation.md)。
 
 ## 架构
 

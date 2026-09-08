@@ -24,7 +24,7 @@ from unitree_sdk2py.comm.motion_switcher.motion_switcher_client import MotionSwi
 from unitree_sdk2py.go2.sport.sport_client import SportClient
 
 from driver.driver_base import DriverBase, RobotState, MotorCommand
-from config.go2w_config import DDS
+from config.go2w_config import CTRL, DDS_IDX_FROM_CTRL, DDS
 
 
 class DdsDriver(DriverBase):
@@ -119,6 +119,10 @@ class DdsDriver(DriverBase):
         if any(not np.isfinite(values).all() for values in arrays):
             self.set_emergency_damping()
             raise RuntimeError("MotorCommand 包含 NaN/Inf")
+        violation = self._check_command_limits(cmd)
+        if violation:
+            self.set_emergency_damping()
+            raise RuntimeError(f"MotorCommand 超出安全限位: {violation}")
         with self._cmd_lock:
             self._pending_cmd = cmd
             self._has_pending_cmd = True
@@ -216,22 +220,33 @@ class DdsDriver(DriverBase):
     # ── 安全检测 ──────────────────────────────────────────────────────────
 
     def _check_limits(self, state: RobotState):
-        for i in range(12):
+        for i in range(16):
             limits = DDS.JOINT_LIMITS[i]
             q = state.joint_positions[i]
             dq = state.joint_velocities[i]
-            if limits["q_min"] is not None and q < limits["q_min"]:
+            if q < limits["q_min"]:
                 return f"J{i} q={q:.3f} < q_min={limits['q_min']:.3f}"
-            if limits["q_max"] is not None and q > limits["q_max"]:
+            if q > limits["q_max"]:
                 return f"J{i} q={q:.3f} > q_max={limits['q_max']:.3f}"
-            if limits["dq_max"] is not None and abs(dq) > limits["dq_max"]:
+            if abs(dq) > limits["dq_max"]:
                 return f"J{i} |dq|={abs(dq):.3f} > dq_max={limits['dq_max']:.3f}"
 
-        if DDS.WHEEL_VEL_LIMIT is not None:
-            for i in range(12, 16):
-                dq = state.joint_velocities[i]
-                if abs(dq) > DDS.WHEEL_VEL_LIMIT:
-                    return f"W{i-12} |dq|={abs(dq):.3f} > limit={DDS.WHEEL_VEL_LIMIT}"
+        return None
+
+    def _check_command_limits(self, cmd: MotorCommand):
+        """Check target q/dq before a command enters the 500 Hz buffer."""
+        for dds_index, ctrl_index in enumerate(DDS_IDX_FROM_CTRL):
+            limits = DDS.JOINT_LIMITS[dds_index]
+            dq = float(cmd.velocities[dds_index])
+            if abs(dq) > limits["dq_max"]:
+                return f"J{dds_index} |dq_cmd|={dq:.3f} > dq_max={limits['dq_max']:.3f}"
+            if ctrl_index not in CTRL.WHEEL_INDICES:
+                q = float(cmd.positions[dds_index])
+                if q < limits["q_min"] or q > limits["q_max"]:
+                    return (
+                        f"J{dds_index} q_cmd={q:.3f} outside "
+                        f"[{limits['q_min']:.5f},{limits['q_max']:.5f}]"
+                    )
         return None
 
     # ── LowCmd 填充 ───────────────────────────────────────────────────────

@@ -15,6 +15,7 @@ import numpy as np
 import torch
 
 from config.go2w_config import CTRL, CTRL_IDX_FROM_DDS, DDS_IDX_FROM_CTRL
+from depth import postprocess as depth_postprocess
 from driver.driver_base import MotorCommand, RobotState
 from policy.actor_critic_wmp import ActorCriticWMP
 from policy.dreamer.models import WorldModel
@@ -24,10 +25,10 @@ from policy.utils import quat_rotate_inverse
 class ControllerGo2wWMP:
     """Go2W WMP 推理适配器，不依赖 ROS 或具体驱动后端。"""
 
-    IMAGE_SHAPE = (64, 64)
-    DEPTH_NEAR_M = 0.0
-    DEPTH_FAR_M = 2.0
-    DEPTH_CENTER = 0.5
+    IMAGE_SHAPE = depth_postprocess.IMAGE_SHAPE
+    DEPTH_NEAR_M = depth_postprocess.DEPTH_NEAR_M
+    DEPTH_FAR_M = depth_postprocess.DEPTH_FAR_M
+    DEPTH_CENTER = depth_postprocess.DEPTH_CENTER
     UPDATE_INTERVAL = 5
     PROP_DIM = CTRL.NUM_ACTIONS * 2 + 9 - 4  # 37，去掉四个轮关节位置
     HISTORY_FRAME_DIM = 50  # gyro(3) + gravity(3) + legs(12) + dq(16) + action(16)
@@ -194,19 +195,7 @@ class ControllerGo2wWMP:
         MuJoCo/实机输入中的所有非有限值也统一按远平面处理，避免产生虚假的
         近距离障碍。Dreamer 的 ConvEncoder 还会按 checkpoint 结构再减 0.5。
         """
-        depth = np.asarray(depth_m, dtype=np.float32)
-        if depth.shape != cls.IMAGE_SHAPE:
-            raise ValueError(f"WMP 米制深度图必须是 {cls.IMAGE_SHAPE}，实际为 {depth.shape}")
-        depth = np.nan_to_num(
-            depth,
-            copy=True,
-            nan=cls.DEPTH_FAR_M,
-            posinf=cls.DEPTH_FAR_M,
-            neginf=cls.DEPTH_FAR_M,
-        )
-        depth = np.clip(depth, cls.DEPTH_NEAR_M, cls.DEPTH_FAR_M)
-        depth = (depth - cls.DEPTH_NEAR_M) / (cls.DEPTH_FAR_M - cls.DEPTH_NEAR_M)
-        return np.ascontiguousarray(depth - cls.DEPTH_CENTER, dtype=np.float32)
+        return depth_postprocess.preprocess_depth_for_wmp(depth_m)
 
     def _select_delayed_depth(self, depth_m: np.ndarray) -> np.ndarray:
         """复现训练 depth buffer 的一帧（100 ms）相机延迟。"""

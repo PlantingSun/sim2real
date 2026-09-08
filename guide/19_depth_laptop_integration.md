@@ -1,126 +1,194 @@
 # 笔记本接收 Go2W 机载深度
 
-本接口是 **CycloneDDS 自定义 IDL**，不是 ROS `sensor_msgs/Image`，也不是 RealSense 原生 DDS。
-不要求笔记本安装 RealSense SDK。接收器不发送机器人命令；与笔记本策略在不同 DDS domain 工作。
+本页用于依次验收：基础接收、实时可视化、5 分钟稳定性和 Go2WWMP 后处理。
 
-## 1. 最小依赖与启动
+所有命令只订阅深度专用的 CycloneDDS domain 42，不初始化机器人 domain 0，不发送 LowCmd，
+也不调用 Sport Mode。完成当前四项验收前，不进入实机策略控制。
 
-复制本项目的 `depth/`、`scripts/depth/` 和 `requirements/depth-laptop.txt` 即可。
-建议使用已有且验证过的 CycloneDDS 0.10.2 环境，或新建 Python 3.8–3.11 环境：
+## 1. 准备
 
-```bash
-python3 -m venv .venv-depth
-.venv-depth/bin/python -m pip install -r requirements/depth-laptop.txt
-```
+### 1.1 笔记本环境
 
-若平台没有可用的 CycloneDDS wheel，需先安装/构建同版本 CycloneDDS C 库 0.10.2，再以
-`CYCLONEDDS_HOME` 指定安装前缀安装 Python binding。不要混用 ROS 附带的其他版本。
-Orin 已有的 `.venv` 环境无需重装。OpenCV 仅预览时需要，纯接收只需 NumPy 和 CycloneDDS。
-
-笔记本网卡应与 Orin `192.168.123.18/24` 连通，使用没有地址冲突的 `192.168.123.x/24`；
-网卡名通过 `ip -br addr` 确认。以下 `enp3s0` 是示例，必须替换成自己的有线网卡：
+在笔记本执行：
 
 ```bash
-DEPTH_PYTHON="$PWD/.venv-depth/bin/python" \
-DEPTH_DDS_PREFIX="$PWD/.venv-depth" \
-  bash scripts/depth/run_receiver.sh --interface enp3s0 --duration 60
-
-# 已有本项目 .venv 时不需要上面两个环境变量
-bash scripts/depth/run_receiver.sh --interface enp3s0 --preview
+cd /home/robot/sim2real_ws
+source setup.sh robot
+unset CYCLONEDDS_URI ROS_DOMAIN_ID LD_PRELOAD
+python -c 'import cyclonedds, numpy, cv2; print("depth laptop environment OK")'
 ```
 
-预览中黑色为 0 m、白色为 2 m；无数据显示 `STALE / NO DATA`。画面不是训练输入的归一化结果。
-可用 `--output /tmp/depth_stats.jsonl --save-sample /tmp/depth_sample.npz` 保存统计与米制样本。
-输出路径由调用方指定，接收器的这两个选项会覆盖同名文件，保留证据时请使用新文件名。
+这里的 `source setup.sh robot` 只配置现有 Python 和动态库；`unset` 清掉为电机 domain 0 准备的
+CycloneDDS 环境，保证下面的 Python 进程只使用深度 domain 42。本页后续直接运行 Python，
+不依赖 wrapper 自动寻找环境。若没有先执行这一段，请不要直接复制后面的命令。
 
-## 2. 协议约定（v1）
+这只是本页“深度单独验收”的隔离措施，不代表 domain 0 和 domain 42 不能并存。最终实机部署时，
+电机进程可以继续持有 domain 0，深度/WMP 进程持有 domain 42；也可以在同一 Python 进程中创建
+两个不同 domain 的 participant。两种 domain 使用同一有线网卡即可，但每个 participant 必须明确
+自己的 domain、topic、QoS 和网络配置。
 
-| 项目 | 固定值/语义 |
+`scripts/depth/run_receiver.sh`、`run_acceptance.sh` 和 `run_inspect_sample.sh` 仍保留给独立
+脚本调用使用；它们的作用只是自动解析 Python 环境和清理动态库，不会提供额外的 DDS 功能。
+
+确认笔记本实际使用的有线网卡：
+
+```bash
+ip -br addr
+ip route
+ping -c 3 192.168.123.18
+```
+
+当前笔记本通常为 `enp0s31f6`，但必须以现场结果为准：
+
+```bash
+# 将下面的值替换成 ip -br addr 显示的实际有线网卡名
+export DEPTH_IF=enp0s31f6
+```
+
+### 1.2 Orin 发布状态
+
+在 Orin 执行：
+
+```bash
+systemctl status go2w-depth.service --no-pager
+journalctl -u go2w-depth.service -n 20 --no-pager
+```
+
+继续测试前，日志应有 `CONNECTED` 和持续更新的 `STATS`。
+
+## 2. 四步验收
+
+每一步通过后再执行下一步。重复测试时更换输出文件或目录名称，避免覆盖已有证据。
+
+### 2.1 基础接收：30 秒
+
+```bash
+python -m depth.receiver --interface "${DEPTH_IF:?请先设置实际有线网卡名，例如 export DEPTH_IF=enp0s31f6}" --duration 30 \
+  --output logs/depth/laptop_receive_step1.jsonl \
+  --save-sample logs/depth/laptop_receive_step1.npz
+```
+
+通过条件：
+
+- 很快出现 `"event": "first_frame"`；
+- `shape` 为 `[64,64]`，`dtype` 为 `float32`；
+- `depth_min_m` 和 `depth_max_m` 位于 `[0,2]`；
+- 最终出现 `"event": "final"` 和 `"received_any": true`；
+- 命令退出码为 0。
+
+若 30 秒内没有新鲜帧，程序打印 `No fresh depth frame was received.` 并返回退出码 2。
+
+### 2.2 实时可视化
+
+```bash
+python -m depth.receiver --interface "${DEPTH_IF:?请先设置实际有线网卡名，例如 export DEPTH_IF=enp0s31f6}" --preview
+```
+
+窗口包含：
+
+- 米制深度：0 m 为黑、2 m 为白，无效像素为紫色；
+- 有效掩码：白色有效、黑色无效。
+
+当前 USB2 采集下最底部一行无效是已知现象。画面方向应与肉眼一致：左侧物体显示在左侧，
+上方物体显示在上方。`STALE / NO DATA` 表示 100 ms 内没有新鲜帧。按 `q` 或 `Esc` 退出。
+
+### 2.3 稳定性：300 秒
+
+输出目录必须不存在：
+
+```bash
+python scripts/depth/acceptance.py --interface "${DEPTH_IF:?请先设置实际有线网卡名，例如 export DEPTH_IF=enp0s31f6}" --duration 300 \
+  --wmp-postprocess --output-dir logs/depth/laptop_cable_5min_01
+```
+
+检查 `logs/depth/laptop_cable_5min_01/summary.json`：
+
+- `fps_pass: true`：每个完整窗口至少 50 Hz；
+- `gap_pass: true`：最大接收间隔不超过 100 ms；
+- `integrity_pass: true`：没有重复、逆序、畸形或机载处理超时；
+- `wmp_pass: true`、`wmp_failures: 0`；
+- 命令退出码为 0。
+
+同时记录 `min_new_frame_hz`、`max_gap_ms` 和各窗口的 `missing`。`missing` 是源帧号缺口，
+可能来自相机、机载最新帧覆盖或网络，不能单独把它认定为网线丢包。
+
+### 2.4 Go2WWMP 后处理
+
+```bash
+python -m depth.receiver --interface "${DEPTH_IF:?请先设置实际有线网卡名，例如 export DEPTH_IF=enp0s31f6}" --duration 30 \
+  --wmp-postprocess --preview \
+  --save-sample logs/depth/laptop_wmp_step4.npz
+```
+
+窗口会增加 WMP 输入面板。通过条件：
+
+- `wmp_shape` 为 `[64,64]`，`wmp_dtype` 为 `float32`；
+- `wmp_min` 和 `wmp_max` 位于 `[-0.5,0.5]`；
+- NPZ 同时包含原始 `depth_m`、`valid` 和处理后的 `depth_wmp`。
+
+离线保存检查图：
+
+```bash
+python scripts/depth/inspect_sample.py \
+  logs/depth/laptop_wmp_step4.npz \
+  --output logs/depth/laptop_wmp_step4.png
+```
+
+## 3. 当前数据约定
+
+| 项目 | 当前值 |
 |---|---|
-| DDS domain | 默认 42，双方必须相同；不复用电机 domain 0 |
+| DDS domain | 42，与电机 domain 0 隔离 |
 | Topic | `rt/depth/image64` |
-| Type name | `go2w_depth::DepthFrame`，`@final`，无 key |
+| Type | `go2w_depth::DepthFrame` v1 |
 | QoS | BEST_EFFORT、KEEP_LAST(1)、VOLATILE |
-| Depth | `float depth_m[4096]`，行优先，reshape 为 `(64,64)` |
-| 单位与方向 | 米，光轴 Z 深度；图像上方朝上，左侧朝左，不翻转/转置 |
-| 数值 | 所有值有限，范围 `[0,2]`；缺测填 2，较远有效值裁剪为 2 |
-| 有效性 | `octet valid[4096]`，0/1；原始缺测、视场外为 0，真实远处可为 1 |
-| 空间模型 | 58°×58° 虚拟针孔相机，源内参重采样；当前 USB2 下最底部一行无效 |
+| 深度 | `float32 (64,64)`，米制光轴 Z 深度，范围 `[0,2]` |
+| 有效掩码 | `uint8 (64,64)`，仅允许 0/1；无效像素的深度必须为 2 m |
+| 图像方向 | 上方朝上、左侧朝左，不翻转、不转置 |
+| 空间模型 | 58°×58°，当前 USB2 模式下最底部一行无效 |
 
-完整字段及顺序以 `depth/DepthFrame.idl` 为准；Python 对应类在 `depth/receiver.py`。
-64×64 float 本体约 0.98 MB/s @60Hz，加掩码约 **1.23 MB/s**，还需计算 CDR/RTPS/UDP 开销。
-端序和分片交给 DDS/CDR；不要直接把 UDP 包当成 float 数组。该类型一次消息约 20 KiB，
-大于以太网 MTU，双方必须使用 DDS 的分片重组。
-启动实现显式设置 `MaxMessageSize=1400B`、`FragmentSize=1280B`，使普通 MTU 1500 网络上的
-深度数据使用小 UDP 包传输，避免默认 14720B 载荷带来的 IP 层分片。自写接收端请沿用这两个设置。
+接收器只保留最新帧，拒绝版本错误、非有限值、越界深度、非法掩码、重复帧和逆序帧。
+`get_latest(max_age_ms=100)` 在接收端判断帧是否新鲜；该判断不包含未经校时证明的跨机单向延迟。
 
-`version` 必须为 1。`session_id` 是发布会话的随机标识；相机重新打开/发布进程重启后变化。
-`frame_id` 是相机源帧号，不是人为补齐的发布计数。相同会话同帧号是重复帧；源帧号缺口
-可能来自相机、机载最新帧覆盖或网络，不能仅凭接收器将其归因于丢包。
-只运行一个正式发布者；模拟发送也应使用独立测试 domain，避免混入正式输入。
+WMP 后处理固定为：
 
-时间字段：
+```text
+depth_wmp = clip(depth_m, 0 m, 2 m) / 2 m - 0.5
+```
 
-- `device_timestamp_ms` / `timestamp_domain`：SDK 原始时间及域。0=硬件时钟，1=系统时间，
-  2=全局时间；模拟源为 -1。不同域不能直接相减。
-- `capture_monotonic_ns`：机载回调**收到深度帧**的单调时间，不是曝光开始时间。
-- `publish_monotonic_ns`：机载调用 DDS write 前的单调时间；与上项之差是回调后处理耗时，
-  不包含曝光、USB 传输或网络传输。
-- `publish_unix_ns`：发布前系统 UTC 时间。只有两机校时及同步误差经过验证，才能估计网络单向延迟。
-- 接收器另外记录笔记本自己的 `received_monotonic_ns`，仅用于本地新鲜度。
+实现位于 `depth/postprocess.py`，接收验收工具和 `ControllerGo2wWMP` 共用这一份代码。
+以后调用 `ControllerGo2wWMP.step()` 时仍传入米制 `depth_m`，不能传入已经处理的 `depth_wmp`，
+否则会发生二次后处理。World model 仍按 simulation 已确认的节奏，每 5 个 50 Hz policy 周期更新一次。
 
-## 3. 接入策略
-
-先使用接收示例验证连接，再在笔记本推理进程中创建一个 `DepthReceiver`。
-运行该进程时同样需要隔离 ROS 动态库路径并加载 CycloneDDS 0.10.2。
+## 4. 接入代码示例
 
 ```python
+import os
+
 from depth.receiver import DepthReceiver
 
-with DepthReceiver(interface="enp3s0", domain=42) as depth_receiver:
-    # 放入现有策略周期中；接收器内部线程只维护最新图像。
-    sample = depth_receiver.get_latest(max_age_ms=100)
+with DepthReceiver(interface=os.environ["DEPTH_IF"], domain=42) as receiver:
+    sample = receiver.get_latest(max_age_ms=100)
     if sample is None:
-        # 向现有控制状态机报告深度不可用；不要持续使用缓存旧图。
         depth_available = False
     else:
         depth_available = True
-        depth_m = sample.depth_m       # float32 (64,64)，可传给现有 WMP
-        valid_mask = sample.valid      # uint8 (64,64)，独立质量诊断
-        source_key = (sample.session_id, sample.frame_id)
+        depth_m = sample.depth_m   # 传给 ControllerGo2wWMP.step()
+        valid = sample.valid       # 仅用于质量检查
 ```
 
-`get_latest()` 返回独立数组副本。相机停止/USB 断开后，默认约 100 ms 内变成 `None`。
-判定年龄为“机载回调后处理耗时 + 笔记本收到帧后的等待时间”，**不包含未知网络传输时间**。
-对端历史帧在极端网络排队后才送达的情形，必须借助可靠校时才能严格约束完整帧龄。
-接收器丢弃已识别的重复/逆序帧和处理年龄超过 100 ms 的帧；线程异常会在 API 调用中抛出。
+相机停止、网络中断、接收线程异常或会话切换都必须由后续控制状态机按 fail-closed 处理；
+不能长期复用旧深度，也不能让异常直接穿过实时控制线程。
 
-WMP 当前处理为 `clip(depth_m,0,2)/2 - 0.5`，之后模型内部还有既有中心化逻辑。
-传给现有控制器时不要提前归一化或再次填充延迟。现有 world model 每五个 policy 周期更新一次，
-对应 50 Hz policy 下的 10 Hz；接收 60 Hz 深度并不要求修改这个节奏。
-已有控制器维护训练所需的一帧历史，由它管理，不能让发送端再加 100 ms 延迟。
-无效掩码用于诊断，不直接增加为网络额外通道。
+## 5. 排障
 
-## 4. 收发验收与排障
+无法收图时按顺序检查：
 
-```bash
-# 在实际笔记本运行；发送端是机载开机服务
-DEPTH_PYTHON="$PWD/.venv-depth/bin/python" \
-DEPTH_DDS_PREFIX="$PWD/.venv-depth" \
-  bash scripts/depth/run_acceptance.sh --interface enp3s0 --duration 1800 \
-  --output-dir logs/depth/laptop_long_cable_30min
-```
+1. Orin journal 是否仍有 `CONNECTED` 和持续更新的 `STATS`；
+2. 两端 IP、网卡和路由是否正确，笔记本能否 ping 通 `192.168.123.18`；
+3. 两端是否使用相同的 domain 42、topic、IDL 和 QoS；
+4. 防火墙或交换机是否阻止该有线网段上的 DDS UDP/组播发现；
+5. 是否误用了 ROS 自带的其他 CycloneDDS 库版本。
 
-验收工具先等待首帧并预热，再按 10 秒窗口记录数据。正常连续 30 分钟，每窗口新帧率 ≥50 Hz，
-最大接收间隔 ≤100 ms；否则退出码 2 并保留失败证据。先确认当前链路，然后用计划中的长网线复测。
-人工拔线/拔相机、发送端重启、笔记本晚启动作为单独恢复测试，并记录恢复时间。
-
-无法收图时按顺序检查：机载 journal 是否有 `CONNECTED` 和持续 `STATS`；两端接口是否选对；
-domain/topic/type/QoS 是否一致；地址是否冲突；防火墙是否允许该有线网段上的 DDS UDP。
-domain 42 的标准端口基址是 `7400 + 250×42 = 17900`，发现/数据及 participant 单播端口在此基础上分配。
-不要通过全局关闭防火墙掩盖配置问题。交换机/网络需允许 DDS 发现所用的组播；此版本使用默认组播发现。
-
-程序的 JSON 包含 `new_frame_hz`、`missing`、`duplicates`、`out_of_order`、`malformed`、
-`source_lagged`、`sessions`、接收间隔与处理耗时 P50/P95/P99/max。计数累计，帧率/分位数按报告窗口。
-常规 CLI 每 10 秒打印；API 的分位数最多保存最近 4096 个样本以限制内存。
-同机测试结果不能替代本节的实际跨机验收。
+不要通过全局关闭防火墙来掩盖配置问题。接收统计中的 `malformed`、`duplicates`、
+`out_of_order`、`source_lagged`、`new_frame_hz` 和 `interval_ms_max` 可用于定位数据质量或时序问题。

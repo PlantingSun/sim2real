@@ -8,5 +8,5 @@
 - `20260907_service_mtu_30min/`：最终小 UDP 包参数下的实际服务持续测试；查看 `summary.json` 判断是否完成及是否通过。
 
 数据解释、当前缺失的一行视场和未完成的物理/跨机验收见
-[`../../guide/20_depth_validation_record.md`](../../guide/20_depth_validation_record.md)。
+[`../../guide/19.5_depth_validation_record.md`](../../guide/19.5_depth_validation_record.md)。
 NPZ/YAML 保留米制真值数据，PNG 仅用于查看。不要用预览 PNG 作为策略输入。

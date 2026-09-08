@@ -16,6 +16,8 @@ from cyclonedds.qos import Policy, Qos
 from cyclonedds.sub import DataReader
 from cyclonedds.topic import Topic
 
+from depth.postprocess import preprocess_depth_for_wmp
+
 
 @final
 @dataclass
@@ -55,8 +57,70 @@ def decode(frame, received_ns):
         raise ValueError("Depth outside finite [0, 2] meters")
     if (valid > 1).any() or frame.publish_monotonic_ns < frame.capture_monotonic_ns:
         raise ValueError("Invalid mask or sender timestamps")
+    if np.any((valid == 0) & (depth != 2.0)):
+        raise ValueError("Invalid pixels must contain the 2 meter far-plane value")
     return DepthSample(depth.reshape(64, 64).copy(), valid.reshape(64, 64).copy(),
                        frame.session_id, frame.frame_id, received_ns, frame)
+
+
+def describe_sample(sample, include_wmp=False):
+    """Return JSON-friendly quality and optional WMP-input statistics."""
+    depth = sample.depth_m
+    valid = sample.valid
+    result = {
+        "session_id": int(sample.session_id),
+        "frame_id": int(sample.frame_id),
+        "shape": list(depth.shape),
+        "dtype": str(depth.dtype),
+        "depth_min_m": float(np.min(depth)),
+        "depth_max_m": float(np.max(depth)),
+        "depth_mean_m": float(np.mean(depth)),
+        "valid_ratio": float(np.mean(valid != 0)),
+        "invalid_pixels": int(np.count_nonzero(valid == 0)),
+    }
+    if include_wmp:
+        depth_wmp = preprocess_depth_for_wmp(depth)
+        result.update(
+            wmp_shape=list(depth_wmp.shape),
+            wmp_dtype=str(depth_wmp.dtype),
+            wmp_min=float(np.min(depth_wmp)),
+            wmp_max=float(np.max(depth_wmp)),
+            wmp_mean=float(np.mean(depth_wmp)),
+        )
+    return result
+
+
+def _labeled_panel(cv2, image, title):
+    image = cv2.resize(image, (320, 320), interpolation=cv2.INTER_NEAREST)
+    canvas = np.full((356, 320, 3), 245, dtype=np.uint8)
+    canvas[36:] = image
+    cv2.putText(canvas, title, (8, 24), cv2.FONT_HERSHEY_SIMPLEX, 0.48, (0, 0, 0), 1)
+    return canvas
+
+
+def build_preview(cv2, sample, include_wmp=False):
+    """Build depth, validity and optional WMP panels for human inspection."""
+    if sample is None:
+        canvas = np.zeros((356, 640, 3), dtype=np.uint8)
+        cv2.putText(canvas, "STALE / NO DATA", (150, 180), cv2.FONT_HERSHEY_SIMPLEX,
+                    1.0, (255, 255, 255), 2)
+        return canvas
+
+    valid = sample.valid.astype(bool)
+    meters_u8 = np.rint(sample.depth_m * 127.5).astype(np.uint8)
+    meters = cv2.cvtColor(meters_u8, cv2.COLOR_GRAY2BGR)
+    meters[~valid] = (255, 0, 255)
+    valid_view = cv2.cvtColor((valid.astype(np.uint8) * 255), cv2.COLOR_GRAY2BGR)
+    panels = [
+        _labeled_panel(cv2, meters, "meters: 0 black / 2 white"),
+        _labeled_panel(cv2, valid_view, "valid mask: white = valid"),
+    ]
+    if include_wmp:
+        depth_wmp = preprocess_depth_for_wmp(sample.depth_m)
+        wmp_u8 = np.rint((depth_wmp + 0.5) * 255.0).astype(np.uint8)
+        wmp_view = cv2.cvtColor(wmp_u8, cv2.COLOR_GRAY2BGR)
+        panels.append(_labeled_panel(cv2, wmp_view, "WMP input: -0.5 to +0.5"))
+    return np.concatenate(panels, axis=1)
 
 
 class DepthReceiver:
@@ -191,28 +255,54 @@ def main():
     parser.add_argument("--topic", default="rt/depth/image64")
     parser.add_argument("--duration", type=float, default=0)
     parser.add_argument("--preview", action="store_true")
+    parser.add_argument(
+        "--wmp-postprocess",
+        action="store_true",
+        help="Apply and report the exact NumPy preprocessing used by Go2WWMP",
+    )
     parser.add_argument("--output", help="Write JSONL statistics to this file")
-    parser.add_argument("--save-sample", help="Save latest valid sample as NPZ when exiting")
+    parser.add_argument(
+        "--save-sample",
+        help="Save latest fresh sample as NPZ; includes depth_wmp with --wmp-postprocess",
+    )
     args = parser.parse_args()
-    output = open(args.output, "w") if args.output else None
+    if not args.interface or not args.interface.strip():
+        parser.error("--interface is empty; set DEPTH_IF to the actual wired NIC from 'ip -br addr'")
+    if args.duration < 0:
+        parser.error("--duration must be nonnegative; use 0 to run until interrupted")
+    output = None
     cv2 = None
     last_sample = None
     if args.preview:
-        import cv2
+        try:
+            import cv2
+        except ModuleNotFoundError as exc:
+            parser.error(f"--preview requires OpenCV (cv2): {exc}")
     try:
         with DepthReceiver(args.interface, args.domain, args.topic) as receiver:
+            if args.output:
+                output = open(args.output, "w")
             start = time.monotonic()
             next_report = start + 10
             while args.duration <= 0 or time.monotonic() - start < args.duration:
                 now = time.monotonic()
-                if args.save_sample:
-                    sample = receiver.get_latest()
-                    if sample is not None:
-                        last_sample = sample
+                sample = receiver.get_latest()
+                if sample is not None:
+                    if last_sample is None:
+                        first = describe_sample(sample, args.wmp_postprocess)
+                        first["event"] = "first_frame"
+                        line = json.dumps(first)
+                        print(line, flush=True)
+                        if output:
+                            output.write(line + "\n")
+                            output.flush()
+                    last_sample = sample
                 if now >= next_report:
                     data = receiver.stats()
                     data["below_target"] = data["new_frame_hz"] < 50
-                    data["stale"] = receiver.get_latest() is None
+                    data["stale"] = sample is None
+                    if sample is not None:
+                        data.update(describe_sample(sample, args.wmp_postprocess))
                     line = json.dumps(data)
                     print(line, flush=True)
                     if output:
@@ -220,32 +310,47 @@ def main():
                         output.flush()
                     next_report = now + 10
                 if cv2 is not None:
-                    sample = receiver.get_latest()
-                    view = np.zeros((64, 64), dtype=np.uint8) if sample is None else np.rint(sample.depth_m * 127.5).astype(np.uint8)
-                    view = cv2.resize(view, (512, 512), interpolation=cv2.INTER_NEAREST)
-                    if sample is None:
-                        cv2.putText(view, "STALE / NO DATA", (20, 40), cv2.FONT_HERSHEY_SIMPLEX, 0.8, 255, 2)
-                    cv2.imshow("Go2W depth: meters, 0 black / 2 white", view)
+                    cv2.imshow("Go2W received depth", build_preview(cv2, sample, args.wmp_postprocess))
                     if cv2.waitKey(1) & 0xff in (27, ord("q")):
                         break
                 time.sleep(0.01)
-            print(json.dumps(receiver.stats()), flush=True)
+            final = receiver.stats()
+            final["event"] = "final"
+            final["received_any"] = last_sample is not None
+            if last_sample is not None:
+                final.update(describe_sample(last_sample, args.wmp_postprocess))
+            line = json.dumps(final)
+            print(line, flush=True)
+            if output:
+                output.write(line + "\n")
+                output.flush()
     except KeyboardInterrupt:
         pass
     finally:
         if args.save_sample and last_sample is not None:
-            np.savez_compressed(args.save_sample, depth_m=last_sample.depth_m, valid=last_sample.valid,
-                                session_id=np.uint64(last_sample.session_id), frame_id=np.uint64(last_sample.frame_id),
-                                device_timestamp_ms=last_sample.source.device_timestamp_ms,
-                                timestamp_domain=last_sample.source.timestamp_domain,
-                                capture_monotonic_ns=np.uint64(last_sample.source.capture_monotonic_ns),
-                                publish_monotonic_ns=np.uint64(last_sample.source.publish_monotonic_ns),
-                                publish_unix_ns=np.uint64(last_sample.source.publish_unix_ns))
+            arrays = dict(
+                depth_m=last_sample.depth_m,
+                valid=last_sample.valid,
+                session_id=np.uint64(last_sample.session_id),
+                frame_id=np.uint64(last_sample.frame_id),
+                device_timestamp_ms=last_sample.source.device_timestamp_ms,
+                timestamp_domain=last_sample.source.timestamp_domain,
+                capture_monotonic_ns=np.uint64(last_sample.source.capture_monotonic_ns),
+                publish_monotonic_ns=np.uint64(last_sample.source.publish_monotonic_ns),
+                publish_unix_ns=np.uint64(last_sample.source.publish_unix_ns),
+            )
+            if args.wmp_postprocess:
+                arrays["depth_wmp"] = preprocess_depth_for_wmp(last_sample.depth_m)
+            np.savez_compressed(args.save_sample, **arrays)
         if output:
             output.close()
         if cv2 is not None:
             cv2.destroyAllWindows()
+    if last_sample is None:
+        print("No fresh depth frame was received.", flush=True)
+        return 2
+    return 0
 
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit(main())

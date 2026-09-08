@@ -10,6 +10,7 @@ import subprocess
 import time
 
 import numpy as np
+from depth.postprocess import preprocess_depth_for_wmp
 from depth.receiver import DepthReceiver
 
 
@@ -32,6 +33,11 @@ def main():
     parser.add_argument("--allow-partial-fov", action="store_true")
     parser.add_argument("--no-spatial", action="store_true")
     parser.add_argument("--publisher-pid", type=int)
+    parser.add_argument(
+        "--wmp-postprocess",
+        action="store_true",
+        help="Continuously validate and save the exact Go2WWMP input conversion",
+    )
     args = parser.parse_args()
     if args.duration < 10:
         parser.error("Use at least 10 seconds")
@@ -45,6 +51,9 @@ def main():
     last_key = None
     previous_usage = None
     previous_time = None
+    wmp_failures = 0
+    wmp_min = None
+    wmp_max = None
     try:
         with DepthReceiver(args.interface, domain=args.domain) as receiver:
             if args.launch:
@@ -77,14 +86,27 @@ def main():
                     sample = receiver.get_latest()
                     if sample is not None and (sample.session_id, sample.frame_id) != last_key:
                         last_key = (sample.session_id, sample.frame_id)
+                        depth_wmp = None
+                        if args.wmp_postprocess:
+                            try:
+                                depth_wmp = preprocess_depth_for_wmp(sample.depth_m)
+                            except (TypeError, ValueError, FloatingPointError):
+                                wmp_failures += 1
+                            else:
+                                current_min = float(np.min(depth_wmp))
+                                current_max = float(np.max(depth_wmp))
+                                wmp_min = current_min if wmp_min is None else min(wmp_min, current_min)
+                                wmp_max = current_max if wmp_max is None else max(wmp_max, current_max)
                         # Last 120 frames support spatial/temporal quality inspection.
-                        frames.append((sample.depth_m, sample.valid, sample.frame_id))
+                        frames.append((sample.depth_m, sample.valid, sample.frame_id, depth_wmp))
                         frames = frames[-120:]
                     if now >= next_report:
                         stats = receiver.stats()
                         stats["elapsed_s"] = now - start
                         stats["unix_s"] = time.time()
                         stats["fresh"] = sample is not None
+                        if args.wmp_postprocess:
+                            stats["wmp_failures"] = wmp_failures
                         usage = process_usage(args.publisher_pid) if args.publisher_pid else None
                         if usage and previous_usage:
                             stats["publisher_cpu_percent_one_core"] = 100 * (usage[0] - previous_usage[0]) / (now - previous_time)
@@ -103,18 +125,30 @@ def main():
                     stats["elapsed_s"] = time.monotonic() - start
                     stats["unix_s"] = time.time()
                     stats["fresh"] = receiver.get_latest() is not None
+                    if args.wmp_postprocess:
+                        stats["wmp_failures"] = wmp_failures
                     windows.append(stats)
                     stream.write(json.dumps(stats) + "\n")
             if frames:
-                np.savez_compressed(output / "last_frames.npz",
-                                    depth_m=np.stack([f[0] for f in frames]),
-                                    valid=np.stack([f[1] for f in frames]),
-                                    frame_id=np.asarray([f[2] for f in frames], dtype=np.uint64))
+                arrays = dict(
+                    depth_m=np.stack([f[0] for f in frames]),
+                    valid=np.stack([f[1] for f in frames]),
+                    frame_id=np.asarray([f[2] for f in frames], dtype=np.uint64),
+                )
+                if args.wmp_postprocess and all(f[3] is not None for f in frames):
+                    arrays["depth_wmp"] = np.stack([f[3] for f in frames])
+                np.savez_compressed(output / "last_frames.npz", **arrays)
             fps_pass = bool(windows) and all(w["new_frame_hz"] >= 50 and w["fresh"] and not w["error"] for w in windows)
             gap_pass = bool(windows) and all((w["interval_ms_max"] or 0) <= 100 for w in windows)
             integrity_pass = bool(windows) and all(w["malformed"] == 0 and w["duplicates"] == 0 and
                                                   w["out_of_order"] == 0 and w["source_lagged"] == 0
                                                   for w in windows)
+            wmp_pass = not args.wmp_postprocess or (
+                wmp_failures == 0
+                and wmp_min is not None
+                and wmp_max is not None
+                and -0.5 <= wmp_min <= wmp_max <= 0.5
+            )
             summary = dict(duration_s=time.monotonic() - start, interface=args.interface, domain=args.domain,
                            launch=args.launch,
                            partial_fov=args.allow_partial_fov if args.launch else None,
@@ -122,11 +156,14 @@ def main():
                            windows=len(windows), min_new_frame_hz=min((w["new_frame_hz"] for w in windows), default=0),
                            max_gap_ms=max((w["interval_ms_max"] or 0 for w in windows), default=0),
                            fps_pass=fps_pass, gap_pass=gap_pass, integrity_pass=integrity_pass,
+                           wmp_postprocess=args.wmp_postprocess, wmp_pass=wmp_pass,
+                           wmp_failures=wmp_failures,
+                           wmp_min=wmp_min, wmp_max=wmp_max,
                            note="Same-host receive is not proof of laptop/long-cable delivery" if args.launch else
                                 "Confirm sender host and cable topology separately")
             (output / "summary.json").write_text(json.dumps(summary, indent=2) + "\n")
             print(json.dumps(summary), flush=True)
-            return 0 if fps_pass and gap_pass and integrity_pass else 2
+            return 0 if fps_pass and gap_pass and integrity_pass and wmp_pass else 2
     finally:
         if publisher:
             publisher.terminate()

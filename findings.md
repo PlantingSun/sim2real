@@ -426,4 +426,103 @@
 - 既有 ROS DDS 动态库会造成符号冲突；深度启动脚本隔离并固定项目 CycloneDDS 0.10.2，RealSense 使用新装的 /usr 2.58.4。
 - 已完成 60 秒真实深度→C++ DDS→Python 同机接收，最低窗口 59.8256 Hz、最大间隔 36.1856 ms，零缺帧/重复。
 - 回调到 DDS write 前的处理时间通常约 6 ms；该指标不包括曝光、USB 或网络延迟。
-- 自启动已安装启用，长测及接管状态见 guide/20_depth_validation_record.md；不可把同机收发称为长网线/笔记本验收。
+- 自启动已安装启用，历史深度服务事实和质量记录移至 guide/19.5_depth_validation_record.md；不可把同机收发称为长网线/笔记本验收。
+
+## 2026-09-07：笔记本接收与 Go2WWMP 部署规划依据
+
+- guide 18.5/19/19.5 已把跨机接口固定为 CycloneDDS domain 42、topic `rt/depth/image64`、`DepthFrame` v1；电机 DDS 仍在 domain 0，二者逻辑隔离。
+- 笔记本收到的是 `float32 (64,64)` 米制光轴 Z 深度和独立 `uint8 (64,64)` 有效掩码；范围 `[0,2] m`，不应在接收层提前归一化、翻转、转置或增加历史帧。
+- 当前 USB2 发布模式约 60 Hz，最底部一行无效；WMP 保持 50 Hz policy、每 5 个周期（10 Hz）更新 world model。60 Hz 接收不意味着要改变训练时序。
+- `DepthReceiver.get_latest(max_age_ms=100)` 已具备最新帧、过期、重复/逆序拒绝语义，但现有文档提示该年龄不含未经校时证明的完整跨机单向网络延迟。
+- 当前已通过的是真实相机加 Orin 同机 DDS 收发；实际笔记本、实际网卡/长网线、30 分钟稳定性、拔插/重启恢复、物理距离与仿真几何对齐仍未通过。
+- 后续部署必须先独立完成只读深度链路与数据质量验收，再做 WMP 离线回放/仿真对齐，最后才把深度接入实机控制入口；助手不得自行启动任何 LowCmd/Sport Mode/真实 policy。
+- `ControllerGo2wWMP` 已明确要求 64×64 米制图，只在 `counter % 5 == 0` 时消费深度；控制器内部保留上一张 10 Hz 深度来复现训练的一帧（100 ms）延迟，因此发布端/接收整合层不能再人为增加延迟。
+- simulation pipeline 只在 `controller.needs_depth_update` 为真时渲染并传图，这应作为笔记本实机入口的时序基准；接收线程可以 60 Hz 更新最新帧，但 WMP 消费节奏保持 10 Hz。
+- WMP 深度预处理当前是 `clip([0,2])/2 - 0.5`，Dreamer encoder 按现有 checkpoint 结构再次中心化；这是此前确认过的 pipeline 语义，实机接入不得在接收层再做缩放或中心化。
+- 当前 `step()` 在需要更新的策略帧收到 `None` 会抛错；实机整合必须把“未收到首帧、过期、接收线程异常、会话切换”纳入明确的 fail-closed 状态机，而不能让异常直接穿过 500 Hz 发布线程或继续复用旧深度。
+- 当前笔记本实机入口只支持 `ControllerGo2w`/`run_go2w_policy`，尚没有 go2wwmp 实机 worker；不能仅替换模型路径，必须新增独立入口或清晰的 policy 类型分支。
+- 当前双进程入口在 LowCmd 固定站姿接管后才启动并等待 policy 子进程。对 WMP 来说，模型加载和新鲜深度都属于接管前置条件；新版应在任何 ReleaseMode/LowCmd 前完成“WMP 模型加载 + depth domain 42 收到新鲜帧 + 只读推理自检”。
+- 现有 `DdsDriver` 在 500 Hz 内有状态限位和紧急阻尼，退出时也发送阻尼；这些安全边界应复用，不改动其默认行为。深度过期、深度接收异常、policy 子进程退出或推理超时应明确触发 fail-closed 路径。
+- 深度 DDS 与电机 DDS 最适合保持进程/域隔离：WMP 子进程订阅 domain 42 并做深度与推理，主进程继续只持有 Unitree domain 0、LowState/LowCmd 和人工阶段确认；这也避免把深度线程塞进 500 Hz LowCmd 主路径。
+- 最新 pipeline 复审文档与代码均已将 `model_6000.pt` 设为当前 simulation 默认；本地还存在 1750/3500/5500/6000 四个不同哈希的 checkpoint。实机前必须固定并记录最终模型哈希，不能沿用旧文档中的 1750 默认或只凭编号选择。
+- 现有 6 项 WMP 单元测试覆盖深度数值、100 ms 历史、yaw 缩放、历史初始化、连续动作历史和 10 Hz 更新；深度 transport 测试覆盖序列化、畸形拒绝以及可选 UDP 新帧/过期/重启，但尚无“DepthReceiver → WMP worker → MotorCommand”的集成测试。
+- `setup.sh robot` 在笔记本默认选择 `enp0s31f6` 并为电机 domain 0 设置 CycloneDDS；深度接收必须显式使用现场确认的同一有线接口与 domain 42，不能照抄 guide 中的示例 `enp3s0`。
+- `DDS.JOINT_LIMITS` 当前 12 个腿关节的 q/dq 上下限全部为 `None`，现有自动限位实际上只明确启用了轮速 `30 rad/s` 和 NaN/shape 检查。实机 WMP 阶段不能把这描述为完整关节保护；需要先由用户依据可靠硬件/既有稳定日志审查并确认限制值或明确接受该缺口。
+- 新版 WMP 实机入口应保留当前 simulation 默认的 `model_6000.pt` 作为候选，但在仿真 5500/6000 同工况对照和哈希冻结完成前，不直接把候选等同于实机最终模型。
+- `logs/depth/20260907_service_mtu_30min/summary.json` 显示最终 MTU 配置只记录了约 950 s，状态为 `stopped_early_at_user_request`，虽然该区间帧率/间隔/完整性通过，但不能记为 30 分钟完成；Phase 29 继续保持未完成。
+- 当前 950 s 同机记录最低约 59.79 Hz、最大间隔约 34.06 ms、2 个源帧号缺口、零重复/畸形/逆序，说明基础链路稳定但仍不能替代实际笔记本和长网线。
+- 当前容器为 x86_64，但沙箱禁止读取 netlink，因此本轮无法确认笔记本实际网卡名/IP/路由；现场第一步必须由用户在笔记本终端执行只读网卡检查并把结果记录下来。
+
+## 2026-09-07：笔记本接收验收工具实现依据
+
+- 现有 `depth.receiver` 已具备基础接收、OpenCV 预览、10 秒统计、样本保存和 100 ms 过期语义；
+  `scripts/depth/acceptance.py` 已具备窗口化稳定性验收，因此本轮应扩展而非重复造新接收器。
+- “规定后处理”包含两层：Orin 已完成空间滤波、58°重采样、无效填 2 m；笔记本进入 WMP 前还需
+  严格执行现有 `clip(depth_m,0,2)/2-0.5`。后者当前只写在 Torch controller 中，不利于纯深度环境验收。
+- 为避免公式漂移，新增一个只依赖 NumPy 的共享 WMP 深度后处理函数；`ControllerGo2wWMP` 和
+  接收 CLI 同时调用它。这样笔记本无需加载 Torch 也能验证并保存实际网络输入。
+- 接收 CLI 应在 `--wmp-postprocess` 时输出米制深度、有效率和 WMP 输入统计，并将 `depth_wmp`
+  保存到 NPZ；可视化继续显示米制图，另加 WMP 图和无效像素标记，避免把预览误当网络输入。
+- 约 5 分钟稳定性直接复用 acceptance，文档使用 `--duration 300` 和新的证据目录；发送端由 Orin
+  开机服务提供，不使用 `--launch`，因此测试只订阅 depth domain 42。
+- 用户已将当前跨机稳定性验收时长从原计划的 30 分钟调整为约 5 分钟；本轮以 300 秒为门槛，
+  原 30 分钟仅作为后续可选的正式耐久测试，不能与本次 5 分钟结果混记。
+- 当前笔记本没有 `build/depth/go2w_depth`；现有 C++ 构建脚本明确面向 Orin aarch64，并依赖
+  RealSense C++ 库，因此不应为接收侧测试在笔记本强行复建相机发布器。
+- 现有 CycloneDDS Python binding 提供 `DataWriter`，可在专用 domain 89 直接生成 64×64 模拟帧；
+  自动测试已用这一纯 Python 发布器验证接收、过期、session 变化和 WMP 后处理，同时保留
+  已在 Orin 通过的 C++→Python 跨语言测试历史结论。
+
+## 2026-09-07：Go2WWMP 第 20 步实现依据
+
+- 真机入口采用父子进程隔离：父进程只创建 Unitree domain 0 的 `DdsDriver` 并读取 LowState；
+  子进程只创建深度 domain 42 的 `DepthReceiver`、加载 WMP 和执行推理。这样两个 domain 可以
+  在同一网卡并存，同时不会把接收图像、Torch 或日志操作塞入 500 Hz LowCmd 线程。
+- 子进程只有 `ready`、`step`、`error` 三类 Pipe 消息；它返回候选 MotorCommand 供打印和记录，
+  没有任何 LowCmd publisher/write 调用。父进程在首个真实状态和深度自检通过前不会进入可选阶段。
+- Pipe 两端对状态包和 MotorCommand 都做固定 shape、有限值和 `float32` 检查；因此“传到了但
+  维度/数值损坏”的消息会变成明确错误，不会继续进入网络或固定站姿流程。
+- 深度安全门槛按实际 USB2 样本冻结为：`get_latest(max_age_ms=100)`、有效率默认 `>=0.90`、
+  非有限值拒绝、session 改变时重置 RSSM；固定站姿阶段遇到上述任一异常直接 fail-closed。
+- `--print-only` 不调用 `StandUp`、`ReleaseMode`、`start_lowcmd_thread` 或 `Write`；只有显式
+  `--ground-stand --arm` 才进入用户确认的落地固定初始站姿流程，而且仍禁止发送 WMP action；
+  `--hold-stand` 仅保留为隐藏兼容别名。
+- 当前第 20 步不接入手柄/键盘命令，两个模式都显式使用 `cmd_vel=[0,0,0]`，避免验证阶段把
+  外部速度指令误传入网络；后续若接入命令必须单独增加限幅、失联和人工确认。
+- 固定站姿的人工确认和 `StandUp`/`ReleaseMode` 可能耗时较长；因此在 `ReleaseMode` 成功后、
+  启动 LowCmd 前增加一次无动作的 `session_sync`。这允许接管前已发生的相机服务重启重新建立
+  基线，但接管后的 session 改变仍立即 fail-closed，不能用“自动恢复”掩盖实时感知重启。
+
+## 2026-09-07：固定站姿首次现场退出
+
+- 用户首次执行固定站姿时，`StandUp`、`ReleaseMode` 和固定 LowCmd 启动均成功；随后入口报告
+  `深度 session 改变` 并进入紧急阻尼。该行为符合原有 fail-closed 设计，未继续使用可能已重启
+  的深度服务数据。
+- 发布器的 `session_id` 在进程启动时随机生成并在该进程整个生命周期保持不变，因此该事件不是
+  普通丢帧；优先排查 Orin 深度服务重启、RealSense 重新连接，或 domain 42 上存在两个发布者。
+- 已修正流程：`ReleaseMode` 成功后、任何 LowCmd 接管前先执行无动作 `session_sync`；只有接管后
+  的 session 改变才直接停止并阻尼，同时错误信息打印旧/新 session 与 frame 以便回查日志。
+
+## 2026-09-07：固定站姿第二次现场日志
+
+- `logs/real/go2wwmp_hold_stand_2.jsonl` 共 1500 条 step，`session_changed=0`，同一深度 session；
+  `needs_depth_update=300`，符合 50 Hz policy / 10 Hz world-model 更新节奏。
+- `depth_valid_ratio` 为 `0.9224–0.9387`，高于当前 `0.90` 门槛；`depth_local_age_ms` 最大
+  `18.59 ms`，`state_age_ms` P99 `2.15 ms`；未见 session、frame 或 state tick 逆序。
+- `inference_ms` P99 `7.88 ms`、最大 `11.65 ms`，可作为当前笔记本基准，但不应把它解释为
+  已证明落地闭环稳定。日志中仍只有候选 action/MotorCommand，实际 LowCmd 是固定初始站姿。
+
+## 2026-09-07：WMP action 5 秒短测入口
+
+- 用户指定所有 16 路 dq/轮速上限 `30 rad/s`，q 限位采用项目
+  `assets/go2w_description/mjcf/go2w.xml` 的 hip/thigh/calf/foot range，并按已确认 DDS↔Ctrl
+  映射生成 16 路表。
+- `DdsDriver` 现在同时检查 LowState q/dq 和待发送 MotorCommand 的 q/dq；WMP 目标越界会在进入
+  500 Hz 缓冲前触发紧急阻尼，而不是先发送再等待状态反馈。
+- 新增显式 `--enable-wmp-action`，只允许 `--ground-stand --arm`、必须带 JSONL、duration 不得
+  超过 5 秒；默认和旧的 `--hold-stand` 兼容别名仍只发送固定初始站姿。
+- 用 `hold_stand_2.jsonl` 对新 DDS 顺序限位表做离线回放，1500 条候选 MotorCommand 的 q/dq
+  均未越界；这只是静态筛查，不替代现场急停和短测观察。
+- 当前现场 action 短测在一次深度帧 `valid_ratio=0.8987` 时触发原有立即阻尼；上一帧约为 0.922，
+  机器人当时站立较稳定，用户已执行急停。该值只比 0.90 门槛低约 0.13 个百分点，更像短暂有效
+  像素抖动，但仅凭单条日志不能证明其空间形状或安全性。
