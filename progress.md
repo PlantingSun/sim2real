@@ -392,7 +392,7 @@
 ## 2026-09-07 Go2WWMP 第 20 步真机验证入口
 
 - 用户已完成 guide 19 的四项深度接收验收；对 USB2 底部无效行的处理保持保守：无效像素继续使用
-  2 m 远平面并保留 `valid=0`，不做“填近障碍”或盲目插值；WMP 实机入口默认要求有效率至少 0.90。
+  2 m 远平面并保留 `valid=0`，不做“填近障碍”或盲目插值；有效率只作诊断，不作为 WMP 失能门槛。
 - 将旧的深度历史文档整理为 guide 18.5/19.5，并删除过时的 guide 20/21；当前 guide 20 专注于
   domain 0 状态 + domain 42 深度 + WMP 的只读验证和固定站姿门槛。
 - 新增 `policy/process_worker_go2wwmp.py`：子进程独占深度 domain 42 和 WMP，按 100 ms 新鲜度、
@@ -425,7 +425,133 @@
 - 用户在地面承重、保护架/急停覆盖下运行 action 短测；机器人站立较稳定，但约 2 秒内出现单帧
   `depth_valid_ratio=0.8987 < 0.9000`，程序按原规则进入阻尼，用户执行急停。该事件不是 q/dq
   限位越界，且日志中的上一帧 valid 为 0.922。
-- 用户明确要求保留低有效率帧的真实性，不用固定站姿替代真实观测，也不降低实时感知故障门槛；
-  已撤回本轮新增的“坏帧容忍/动作回退”逻辑，恢复低于阈值立即 fail-closed。
+- 用户明确要求保留低有效率帧的真实性，不用固定站姿替代真实观测，也不因有效率下降直接阻尼；
+  已撤回本轮新增的“坏帧容忍/动作回退”逻辑，并进一步移除原有有效率失能门槛。
 - 仅完成离线代码回退和测试，未再次启动任何实机控制；后续应先分析无效区域的空间分布和产生原因，
   再由用户决定是否调整发布端或质量阈值。
+
+## 2026-09-08：移除 valid_ratio 运行门槛并准备现场录制
+
+- 用户确认 Orin NX 已修复底部一行数据；按照新的安全要求，`valid_ratio` 只保留为诊断指标，
+  不再作为 WMP worker 的失能条件。深度协议现有的无效像素 `valid=0 + depth_m=2.0` 语义保持不变。
+- 删除了 worker 的 `min_valid_ratio` 参数和入口参数；深度过期、session 改变、畸形包、NaN/Inf
+  仍是独立的数据链路故障，未用删除有效率门槛掩盖这些问题。
+- 新增只读 `scripts/depth/record_scene.py`，默认可录制 120 秒完整序列，保存每帧深度、mask、
+  session/frame、发送/接收时间戳和有效率，供后续连通域与邻域深度分析；不创建电机 domain 0，
+  不发送 LowCmd。
+- 新增只读 `scripts/depth/analyze_recording.py`，离线统计有效率、无效连通块、跨帧持久性、
+  最大块邻域深度和无效频率热图；分析结果不自动改写网络输入。
+- 新增只读 `scripts/depth/replay_recording.py`，可在无相机/无机器人连接时回放三联图；默认压缩
+  长空档并在画面标注，避免把 50.9 s 传输空档误看成正常连续运动。
+- 更新 guide 19.5/20，明确无效区域暂按远平面进入 WMP，不在没有数据证据时做插值或邻域填补。
+- 离线复测通过：16 项 unittest（2 项环境相关跳过）、新录制工具编译/help、录制保存 helper 和
+  `git diff --check`；未启动任何实机控制。
+
+## 2026-09-08：scene_walk 录制分析完成
+
+- 用户已运行两分钟录制和离线分析。有效率最小 `0.7397`、中位数 `0.9265`，最大无效连通块
+  858 像素；说明复杂场景低有效率是常态，不能恢复 `valid_ratio` 失能门槛。
+- 录制中有约 50.9 s 接收空档（frame_id 跳约 3061），故只把它用于无效区域几何分析，不把它
+  作为连续链路稳定性验收。
+- 对比邻域统计后，暂定继续使用 `valid=0 + depth_m=2.0`；不启用连通域/邻域填补，避免在未
+  证明几何关系前改变仿真输入。当前进入下一步：用户现场执行短时原地承重站立测试。
+
+## 2026-09-08：WMP action 5 秒现场短测完成
+
+- 用户完成 `logs/real/go2wwmp_action_15s.jsonl`；250 条 step、全部 `wmp_action_sent=true`、
+  无错误行，说明本轮实际进入了 WMP action 发送路径。
+- 离线检查确认 session/frame/state_tick 单调、深度与 LowState 新鲜度正常；valid ratio 最低
+  `0.8643` 仍被保留并继续运行，没有再次触发旧的有效率阻尼规则。
+- q/dq 静态边界检查全部通过；用户现场观察机器人约 5 秒原地站立无抖动/摔倒。该结果仅覆盖
+  承重原地 action 短测，不代表手柄行走或障碍跨越。
+- 下一项工作调整为：先实现并离线验收 go2wwmp 的手柄命令接入（deadman、断连归零、限速、日志），
+  再由用户执行极短低速实机测试；Unitree 原生控制另列独立基线，不与 WMP LowCmd 同时启用。
+
+## 2026-09-08：Go2WWMP 手柄接入完成（待用户只读验收）
+
+- 从本机 `/home/robot/simtosim/src/controller/model/go2wwmp/go2wwmp_config.py` 核对训练范围：
+  `vx=[0,1] m/s`、`vy=0`、`vyaw=[-1,1] rad/s`；修正了此前对 `vx=-0.2` 的记忆，不把负向
+  vx 放进 WMP 训练包络。
+- 新增 WMP 专用 command bounds，控制器、worker、MuJoCo 入口统一使用；Xbox 输入支持 A deadman，
+  严格禁用 vy，并将实际 field cap 默认设为 `vx≤0.2`、`|vyaw|≤0.2`。
+- 新增 [guide/21_go2wwmp_xbox_input.md]，包含离线映射、print-only 和首次 5 秒 action 流程；
+  real JSONL 记录 `command` 与 `command_enabled`，便于验收手柄命令是否按限幅进入网络。
+- 已通过 Python 编译、输入映射测试、12 项 WMP/real pipeline unittest、CLI help 和 diff 检查；
+  未启动真实机器人控制。下一步由用户先执行 guide 21 第 2、3 节，只读确认手柄映射。
+
+## 2026-09-08：手柄范围调整与命令误用修正
+
+- 按用户要求移除默认 `0.2` 现场上限，real 入口默认允许 `vx=[-0.2,1.0]`、`vy=0`、
+  `vyaw=[-1,1]`；`--max-vx/--max-vyaw` 仍可显式收窄。
+- 原始训练源码的 `vx=[0,1]` 与该部署扩展有差异，已在 guide 21 和 findings 中明确标注；不把
+  负向 vx 宣称为训练分布内证据。
+- `test_command_input.py` 增加参数误用提示；它是无设备单元测试，不能带 `--control`。Xbox 实际
+  读取必须运行单独的 `debug_command_input.py`。
+
+## 2026-09-08：长时间 Xbox action 和深度预览入口完成
+
+- `--duration` 现在可省略；无限时长 action 仅允许 Xbox，Back/Ctrl+C/输入故障结束，固定命令仍
+  需要显式有限 duration。
+- Xbox 模式默认每 5 Hz 由 WMP worker 返回深度/valid mask，主进程显示米制深度、valid mask、
+  WMP 输入三联图；预览失败或关闭不改变 LowCmd 控制链。
+- 更新 guide 21 长测命令，不再要求 duration 或额外深度参数；已通过 py_compile、17 项测试和
+  CLI help，未运行真实机器人。
+
+## 2026-09-08：深度预览降为单图 2 Hz
+
+- 长测只渲染一张带无效像素标记的深度图，默认 `--depth-display-hz=2.0`；不再拼接 valid mask
+  和 WMP 三联图，以降低图形资源占用。控制与接收时序未改。
+
+## 2026-09-08：允许位置目标超出 q range，保留实测保护
+
+- 用户反馈台阶测试中的位置目标可能需要超出 MJCF q range 以产生固定 Kp 下的目标动态；已删除
+  `DdsDriver.send_command()` 对 `q_cmd` 的拒绝，不截断、不改写目标。
+- 500 Hz LowState 实测 q/dq 限位检查保持不变；实测越界仍进入紧急阻尼。命令侧 dq 上限、有限值、
+  shape 检查保持不变，避免把“目标位置放开”误变成所有安全检查都关闭。
+- 已更新 guide 00/20 和离线测试；仅做编译/单测验证，未运行真实控制。
+
+## 2026-09-08：按用户要求关闭全部关节位置保护
+
+- 已同时移除 `DdsDriver` 对位置目标 q 和 LowState 实测 q 的限位急停；q range 仅保留为配置参考，
+  不再参与 LowCmd 发送或 500 Hz 保护判断。
+- 保留命令侧 `dq` 与 LowState 实测 `dq` 的 `30 rad/s` 超限急停，以及数据/通信故障保护。
+- 已更新 guide 00/20、findings 和离线测试；未运行实机控制。
+
+## 2026-09-08：取消命令侧速度保护
+
+- 现场台阶日志的 `J15 |dq_cmd|=30.630` 已核对为 `DDS J15 = CTRL index 11 = RL_foot`，即后左轮；
+  Go2WWMP 对轮子使用 `dq` 速度控制，腿部使用 `q` 位置控制，因此并非“位置指令突然变成速度”。
+- 按用户要求取消命令侧 q/dq 限幅；`send_command()` 仅保留 shape、NaN/Inf 完整性检查，LowState
+  实测 `dq > 30 rad/s` 的急停路径保持不变。
+- 已更新 guide、findings、测试；未运行实机控制。
+
+## 2026-09-08：新增 Go2WWMP Unitree 手柄模式
+
+- `test_policy_go2wwmp_real.py --control unitree` 已接入原装遥控器 LowState 解析，速度映射为
+  `vx=Ly`、`vy=0`、`vyaw=-Rx`，并统一应用当前 WMP 部署包络。
+- Unitree 模式使用 L2+R2 触发 LowCmd 接管、Select 退出；Ground-stand 模式要求机器人先由
+  原生 Sport Mode 站稳，不猜测 StandUp 按键组合。新增 guide 22，包含只读和 print-only 验收。
+- 已通过 py_compile、17 项离线测试、CLI help 和 diff 检查；尚未运行真实控制入口。
+
+## 2026-09-08：笔记本网口默认值统一配置
+
+- 在 `config/go2w_config.py` 增加 `DDS.LAPTOP_NET_IF="enp0s31f6"` 和
+  `DDS.DEPTH_NET_IF`；笔记本常用 domain 0/42 Python 入口现在自动读取同一网口。
+- 深度接收、场景录制、稳定性验收和 Go2WWMP real 的 interface 参数均改为可选默认值；只有
+  网络拓扑改变时才需要显式覆盖，guide 19/19.5/20/21/22 已移除重复 export 示例。
+- 已完成离线编译、单测与 help 检查，未运行实机控制。
+
+## 2026-09-08：Go2WWMP Unitree 正式长期运行入口
+
+- 用户已完成 30 秒实机 action 验收：机器人能从原生站立状态经 L2+R2 启动网络并由 Unitree
+  手柄接管，日志为 `logs/real/go2wwmp_unitree_action_30s.jsonl`。
+- 日志含 1500 个连续循环，全部 `wmp_action_sent=true`、深度 session 改变为 0；首末 loop 为
+  1/1500，最大 LowState age 约 2.77 ms，最大单步推理约 10.70 ms。
+- `scripts/real/run_go2wwmp_unitree.py` 已改为完整、独立的正式状态机，不导入或调用任何
+  `test_policy_*` 脚本；无参数时直接运行 Unitree + WMP action，不设置 duration，并自动生成日志。
+- 遥控器解析/命令源移入正式模块 `teleop/unitree_remote.py`，只读 debug、旧验收入口和正式入口
+  共享这一底层映射；正式入口仍只保留 model、log 和关闭深度预览三个可选项。
+- 正式接管在 Sport Mode 尚未释放时先同步深度并缓存初始站姿，ReleaseMode 返回后立即启动 LowCmd；
+  清理顺序先置阻尼、再等待 WMP 子进程和窗口关闭。未由助手运行实机控制。
+- 已通过 Python 3.8 编译、20 项离线单测（2 项按预期跳过）、遥控器映射脚本以及新旧入口的
+  `--help` 检查；另有静态测试禁止正式入口导入 `test_policy`，并锁定同步/释放/LowCmd/阻尼顺序。

@@ -3,14 +3,9 @@
 
 import argparse
 import signal
-import struct
-import threading
 import time
 
 import numpy as np
-
-from unitree_sdk2py.core.channel import ChannelSubscriber
-from unitree_sdk2py.idl.unitree_go.msg.dds_ import LowState_
 
 from config.go2w_config import CTRL, DDS
 from config.paths import model_path
@@ -18,113 +13,8 @@ from driver.dds_driver import DdsDriver
 from driver.driver_base import MotorCommand
 from policy.controller_go2w import ControllerGo2w
 from policy.controller_go2wcr import ControllerGo2wCR
-from scripts.input.debug_unitree_remote import UnitreeRemoteState
 from scripts.real.test_policy_real import build_initial_hold_command, print_motor_command
-from teleop.command_source import CommandSample
-
-
-# 方向和按键常量集中放在这里，实机确认后只需检查这一处。
-# 宇树官方实机 policy 常用映射：vx=Ly, vy=-Lx, vyaw=-Rx。
-UNITREE_AXIS_SIGNS = np.array([1.0, -1.0, -1.0], dtype=np.float32)
-TAKEOVER_BUTTONS = ("L2", "R2")
-QUIT_BUTTON = "Select"
-
-
-class UnitreeRemoteCommandSource:
-    """从 rt/lowstate 读取原装遥控器，并转换为 policy 速度指令。"""
-
-    def __init__(self, deadzone: float, lowstate_timeout: float):
-        self._deadzone = deadzone
-        self._lowstate_timeout = lowstate_timeout
-        self._lock = threading.Lock()
-        self._remote = None
-        self._last_update = 0.0
-        self._packet_count = 0
-
-        # DdsDriver 已经初始化 ChannelFactory；这里只增加第二个 LowState subscriber。
-        self._subscriber = ChannelSubscriber(DDS.LOWSTATE_TOPIC, LowState_)
-        self._subscriber.Init(self._on_lowstate, 10)
-
-    def _on_lowstate(self, msg: LowState_) -> None:
-        try:
-            remote = UnitreeRemoteState.parse(msg.wireless_remote)
-        except (ValueError, struct.error):
-            return
-
-        axes = np.array([remote.lx, remote.ly, remote.rx, remote.ry])
-        if not np.all(np.isfinite(axes)):
-            return
-
-        with self._lock:
-            self._remote = remote
-            self._last_update = time.monotonic()
-            self._packet_count += 1
-
-    def wait_for_first_state(self, timeout: float = 5.0) -> None:
-        """等待第一条有效遥控器数据；此阶段不会发送 LowCmd。"""
-        deadline = time.monotonic() + timeout
-        while time.monotonic() < deadline:
-            with self._lock:
-                if self._remote is not None:
-                    return
-            time.sleep(0.01)
-        raise RuntimeError("等待宇树遥控器 LowState 超时")
-
-    def snapshot(self):
-        """返回最新遥控器、消息年龄和 LowState 包计数。"""
-        with self._lock:
-            remote = self._remote
-            last_update = self._last_update
-            packet_count = self._packet_count
-
-        if remote is None:
-            raise RuntimeError("尚未收到宇树遥控器数据")
-        age = time.monotonic() - last_update
-        if age > self._lowstate_timeout:
-            raise RuntimeError(
-                f"LowState 已停止更新 {age:.3f}s，拒绝继续使用遥控器指令"
-            )
-        return remote, age, packet_count
-
-    def wait_for_takeover(self, stop_requested) -> bool:
-        """等待 L2+R2 的新按下沿；Select 表示不接管并退出。"""
-        self.wait_for_first_state()
-        print("\n[REMOTE READY] 先松开 L2+R2，再同时按下以释放 Sport Mode 并接管。")
-        print("按 Select 可在接管前退出；此时不会发送 LowCmd。")
-
-        armed = False
-        while True:
-            if stop_requested():
-                print("取消接管。")
-                return False
-            remote, _, _ = self.snapshot()
-            if remote.buttons[QUIT_BUTTON]:
-                print("取消接管。")
-                return False
-
-            combo_pressed = all(remote.buttons[name] for name in TAKEOVER_BUTTONS)
-            if not combo_pressed:
-                armed = True
-            elif armed:
-                print("[REMOTE TRIGGER] 检测到 L2+R2，开始 ReleaseMode 接管。")
-                return True
-            time.sleep(0.01)
-
-    def read(self) -> CommandSample:
-        """摇杆始终生效；回中时由 deadzone 归零。"""
-        remote, _, _ = self.snapshot()
-        quit_requested = remote.buttons[QUIT_BUTTON]
-
-        # 原始轴顺序在此显式写出，方便实机逐行核对：Ly, Lx, Rx。
-        axes = np.array([remote.ly, remote.lx, remote.rx], dtype=np.float32)
-        axes[np.abs(axes) < self._deadzone] = 0.0
-        velocity = axes * UNITREE_AXIS_SIGNS * CTRL.COMMAND_LIMITS
-        velocity = np.clip(velocity, -CTRL.COMMAND_LIMITS, CTRL.COMMAND_LIMITS)
-        return CommandSample(velocity, quit_requested=quit_requested)
-
-    def close(self) -> None:
-        # Unitree ChannelSubscriber 没有需要在这里显式关闭的设备句柄。
-        pass
+from teleop.unitree_remote import UnitreeRemoteCommandSource
 
 
 def main(policy_override=None):

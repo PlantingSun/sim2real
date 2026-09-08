@@ -60,7 +60,7 @@ python scripts/input/debug_command_input.py --control keyboard
 
 ```bash
 source setup.sh robot
-python scripts/input/debug_unitree_remote.py --interface eth0 --raw
+python scripts/input/debug_unitree_remote.py --raw
 ```
 
 该脚本只创建 LowState subscriber，不创建 LowCmd publisher。实机已确认：

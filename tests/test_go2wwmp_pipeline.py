@@ -80,6 +80,24 @@ class TestGo2wWMPPipeline(unittest.TestCase):
         np.testing.assert_allclose(prop[6:9].numpy(), [0.2, -0.3, 0.1])
         np.testing.assert_allclose(prop[9:].numpy(), 0.0)
 
+    def test_step_clips_command_to_wmp_training_envelope(self):
+        controller = minimal_controller()
+        controller.policy = SequencePolicy()
+        controller._update_world_model = types.MethodType(lambda *args: None, controller)
+        captured = []
+        original = controller.build_observation
+
+        def capture(this, state, command):
+            captured.append(np.asarray(command, dtype=np.float32).copy())
+            return original(state, command)
+
+        controller.build_observation = types.MethodType(capture, controller)
+        controller.step(
+            standing_state(), np.array([-2.0, 0.8, 2.0], dtype=np.float32),
+            np.ones((64, 64), dtype=np.float32),
+        )
+        np.testing.assert_allclose(captured[0], [-0.2, 0.0, 1.0])
+
     def test_reset_uses_training_zero_history(self):
         controller = minimal_controller()
         controller.obs_history.fill_(7.0)

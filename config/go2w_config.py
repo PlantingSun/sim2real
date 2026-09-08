@@ -47,6 +47,11 @@ class CTRL:
     POLICY_RATE_HZ = 50
     # [vx, vy, vyaw]。输入设备和固定速度模式都在进入策略前裁剪到该范围。
     COMMAND_LIMITS = np.array([1.0, 1.0, 0.5], dtype=np.float32)
+    # simtosim 的原始训练范围是 vx=[0,1]、vy=0、vyaw=[-1,1]；当前实机
+    # 手柄按用户确认放开少量倒车范围到 vx=-0.2。这个范围仍独立于
+    # Go2W/Go2WCR 的通用 COMMAND_LIMITS，并在 WMP 全链路统一裁剪。
+    WMP_COMMAND_MIN = np.array([-0.2, 0.0, -1.0], dtype=np.float32)
+    WMP_COMMAND_MAX = np.array([1.0, 0.0, 1.0], dtype=np.float32)
 
 
 class CRRL:
@@ -72,10 +77,15 @@ class DDS:
     """Unitree SDK2/CycloneDDS 通信和实物侧参数。"""
 
     DOMAIN_ID = 0
+    # 当前已确认的固定有线网口。笔记本和 Orin 的默认值分开写在配置中，
+    # 因此直接运行 Python 入口时也不需要手动 export 网卡环境变量。
+    LAPTOP_NET_IF = "enp0s31f6"
+    ORIN_NET_IF = "eth0"
     DEFAULT_NET_IF = os.environ.get(
         "SIM2REAL_NET_IF",
-        "eth0" if platform.machine() in ("aarch64", "arm64") else "enp0s31f6",
+        ORIN_NET_IF if platform.machine() in ("aarch64", "arm64") else LAPTOP_NET_IF,
     )
+    DEPTH_NET_IF = DEFAULT_NET_IF
     DEFAULT_JOYSTICK = os.environ.get(
         "SIM2REAL_JOYSTICK",
         "/dev/input/by-id/usb-BEITONG_BEITONG_A1T2_BFM_DONGLE-joystick"
@@ -88,8 +98,9 @@ class DDS:
     POS_STOP_F = 2.146e9
     VEL_STOP_F = 16000.0
 
-    # DDS 顺序的 16 路 q/dq 限位，数值对应 assets/go2w_description/mjcf/go2w.xml。
-    # 轮子的 MJCF q range 是无界占位值；轮速和所有 dq 均按 30 rad/s 检查。
+    # DDS 顺序的 16 路 q/dq 参考值，数值对应 assets/go2w_description/mjcf/go2w.xml。
+    # 当前 q_min/q_max 仅作为记录，不启用任何位置保护；命令侧不做 q/dq 限制，只有 LowState
+    # 实测 dq 按 30 rad/s 急停。轮子的 MJCF q range 是无界占位值。
     JOINT_LIMITS = [
         {"q_min": -1.0472, "q_max": 1.0472, "dq_max": 30.0},       # DDS 0: FR hip
         {"q_min": -1.5708, "q_max": 3.4907, "dq_max": 30.0},       # DDS 1: FR thigh

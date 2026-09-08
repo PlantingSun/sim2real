@@ -38,12 +38,8 @@ ip route
 ping -c 3 192.168.123.18
 ```
 
-当前笔记本通常为 `enp0s31f6`，但必须以现场结果为准：
-
-```bash
-# 将下面的值替换成 ip -br addr 显示的实际有线网卡名
-export DEPTH_IF=enp0s31f6
-```
+当前笔记本固定网口已写入 `config/go2w_config.py` 的 `DDS.LAPTOP_NET_IF`，深度接收默认读取
+`DDS.DEPTH_NET_IF`，不需要每次 export。只有更换网线拓扑时才显式传 `--interface` 覆盖。
 
 ### 1.2 Orin 发布状态
 
@@ -63,7 +59,7 @@ journalctl -u go2w-depth.service -n 20 --no-pager
 ### 2.1 基础接收：30 秒
 
 ```bash
-python -m depth.receiver --interface "${DEPTH_IF:?请先设置实际有线网卡名，例如 export DEPTH_IF=enp0s31f6}" --duration 30 \
+python -m depth.receiver --duration 30 \
   --output logs/depth/laptop_receive_step1.jsonl \
   --save-sample logs/depth/laptop_receive_step1.npz
 ```
@@ -81,7 +77,7 @@ python -m depth.receiver --interface "${DEPTH_IF:?请先设置实际有线网卡
 ### 2.2 实时可视化
 
 ```bash
-python -m depth.receiver --interface "${DEPTH_IF:?请先设置实际有线网卡名，例如 export DEPTH_IF=enp0s31f6}" --preview
+python -m depth.receiver --preview
 ```
 
 窗口包含：
@@ -97,7 +93,7 @@ python -m depth.receiver --interface "${DEPTH_IF:?请先设置实际有线网卡
 输出目录必须不存在：
 
 ```bash
-python scripts/depth/acceptance.py --interface "${DEPTH_IF:?请先设置实际有线网卡名，例如 export DEPTH_IF=enp0s31f6}" --duration 300 \
+python scripts/depth/acceptance.py --duration 300 \
   --wmp-postprocess --output-dir logs/depth/laptop_cable_5min_01
 ```
 
@@ -115,7 +111,7 @@ python scripts/depth/acceptance.py --interface "${DEPTH_IF:?请先设置实际�
 ### 2.4 Go2WWMP 后处理
 
 ```bash
-python -m depth.receiver --interface "${DEPTH_IF:?请先设置实际有线网卡名，例如 export DEPTH_IF=enp0s31f6}" --duration 30 \
+python -m depth.receiver --duration 30 \
   --wmp-postprocess --preview \
   --save-sample logs/depth/laptop_wmp_step4.npz
 ```
@@ -163,11 +159,10 @@ depth_wmp = clip(depth_m, 0 m, 2 m) / 2 m - 0.5
 ## 4. 接入代码示例
 
 ```python
-import os
-
+from config.go2w_config import DDS
 from depth.receiver import DepthReceiver
 
-with DepthReceiver(interface=os.environ["DEPTH_IF"], domain=42) as receiver:
+with DepthReceiver(interface=DDS.DEPTH_NET_IF, domain=42) as receiver:
     sample = receiver.get_latest(max_age_ms=100)
     if sample is None:
         depth_available = False

@@ -192,13 +192,19 @@ def main() -> None:
     print("=== go2wwmp WMP MuJoCo 全流程 ===")
     print(f"场景: {args.scene}")
     print(f"模型: {args.model}")
+    command = np.array([args.vx, args.vy, args.vyaw], dtype=np.float32)
+    if np.any(command < CTRL.WMP_COMMAND_MIN) or np.any(command > CTRL.WMP_COMMAND_MAX):
+        parser.error(
+            "Go2WWMP 速度命令必须在训练包络内: "
+            f"min={CTRL.WMP_COMMAND_MIN.tolist()} max={CTRL.WMP_COMMAND_MAX.tolist()}"
+        )
+
     print(f"速度: vx={args.vx} vy={args.vy} vyaw={args.vyaw}")
 
     controller = ControllerGo2wWMP(args.model)
     if args.check_only:
         run_check_only(controller)
         return
-    command = np.array([args.vx, args.vy, args.vyaw], dtype=np.float32)
     if args.headless_frames > 0:
         run_headless(controller, args.scene, command, args.headless_frames)
         return

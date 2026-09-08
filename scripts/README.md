@@ -40,6 +40,8 @@ CRRL 对应入口：
 - `simulation/test_mujoco_pipeline_go2wwmp.py`
 - `real/test_policy_go2wcr_real.py`
 - `real/test_policy_go2wcr_unitree_remote.py`
+- `real/test_policy_go2wwmp_real.py`：Go2WWMP 分阶段验收入口
+- `real/run_go2wwmp_unitree.py`：已验收的 Unitree 手柄长期运行入口（默认无需参数）
 
 例如，在项目根目录执行：
 

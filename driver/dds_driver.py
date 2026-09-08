@@ -2,7 +2,7 @@
 # dds_driver.py — DDS 实物驱动后端
 #
 # 实现 DriverBase 接口，通过 Unitree SDK2 (CycloneDDS) 与机器人通信。
-# 安全逻辑嵌入 500Hz 发布循环：限位检测 → 零阶保持(ZOH) → 发布。
+# 安全逻辑嵌入 500Hz 发布循环：实测状态限位检测 → 零阶保持(ZOH) → 发布。
 # 不做指令平滑——与仿真保持一致，PD 控制器和物理惯性自带平滑效果。
 # ============================================================================
 
@@ -24,7 +24,7 @@ from unitree_sdk2py.comm.motion_switcher.motion_switcher_client import MotionSwi
 from unitree_sdk2py.go2.sport.sport_client import SportClient
 
 from driver.driver_base import DriverBase, RobotState, MotorCommand
-from config.go2w_config import CTRL, DDS_IDX_FROM_CTRL, DDS
+from config.go2w_config import DDS
 
 
 class DdsDriver(DriverBase):
@@ -119,10 +119,6 @@ class DdsDriver(DriverBase):
         if any(not np.isfinite(values).all() for values in arrays):
             self.set_emergency_damping()
             raise RuntimeError("MotorCommand 包含 NaN/Inf")
-        violation = self._check_command_limits(cmd)
-        if violation:
-            self.set_emergency_damping()
-            raise RuntimeError(f"MotorCommand 超出安全限位: {violation}")
         with self._cmd_lock:
             self._pending_cmd = cmd
             self._has_pending_cmd = True
@@ -206,7 +202,7 @@ class DdsDriver(DriverBase):
             if violation:
                 self._emergency = True
                 self._violation_msg = violation
-                print(f"\n[DdsDriver] !! 安全限位违规: {violation}")
+                print(f"\n[DdsDriver] !! 实测速度超限: {violation}")
 
         if self._emergency or not has_cmd:
             self._fill_damping()
@@ -217,36 +213,20 @@ class DdsDriver(DriverBase):
         self._pub.Write(self._low_cmd)
         self._write_count += 1
 
-    # ── 安全检测 ──────────────────────────────────────────────────────────
+    # ── 实测速度安全检测 ────────────────────────────────────────────────────
 
     def _check_limits(self, state: RobotState):
+        """Return a violation only for measured joint velocity over-limit.
+
+        Position protection is intentionally disabled; q values are still
+        transported in RobotState for policy observation and diagnostics.
+        """
         for i in range(16):
             limits = DDS.JOINT_LIMITS[i]
-            q = state.joint_positions[i]
             dq = state.joint_velocities[i]
-            if q < limits["q_min"]:
-                return f"J{i} q={q:.3f} < q_min={limits['q_min']:.3f}"
-            if q > limits["q_max"]:
-                return f"J{i} q={q:.3f} > q_max={limits['q_max']:.3f}"
             if abs(dq) > limits["dq_max"]:
                 return f"J{i} |dq|={abs(dq):.3f} > dq_max={limits['dq_max']:.3f}"
 
-        return None
-
-    def _check_command_limits(self, cmd: MotorCommand):
-        """Check target q/dq before a command enters the 500 Hz buffer."""
-        for dds_index, ctrl_index in enumerate(DDS_IDX_FROM_CTRL):
-            limits = DDS.JOINT_LIMITS[dds_index]
-            dq = float(cmd.velocities[dds_index])
-            if abs(dq) > limits["dq_max"]:
-                return f"J{dds_index} |dq_cmd|={dq:.3f} > dq_max={limits['dq_max']:.3f}"
-            if ctrl_index not in CTRL.WHEEL_INDICES:
-                q = float(cmd.positions[dds_index])
-                if q < limits["q_min"] or q > limits["q_max"]:
-                    return (
-                        f"J{dds_index} q_cmd={q:.3f} outside "
-                        f"[{limits['q_min']:.5f},{limits['q_max']:.5f}]"
-                    )
         return None
 
     # ── LowCmd 填充 ───────────────────────────────────────────────────────

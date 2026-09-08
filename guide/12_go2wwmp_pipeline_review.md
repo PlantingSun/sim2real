@@ -131,6 +131,9 @@ depth buffer: 2 张，world model 选择上一张
 ## 5. 其他观测修复
 
 - yaw command 按训练配置乘以 `0.25`；`vx`、`vy` 保持 1.0 缩放。
+- 训练源码中的命令范围为 `vx=[0,1] m/s`、`vy=0`、`vyaw=[-1,1] rad/s`；当前实机入口按用户
+  确认将 `vx` 扩展到 `[-0.2,1]`，这是部署侧 OOD 扩展，侧向 `vy` 仍固定为 0。详见
+  `guide/21_go2wwmp_xbox_input.md`。
 - WMP 五帧本体历史恢复为训练 runner 的初始化方式：四帧全零，再插入当前一帧观测。
 - prop 观测增加 NaN/Inf 检查，并按训练配置裁剪到 `[-100,100]`。
 - Actor action 在写入历史和转换 MotorCommand 前裁剪到 `[-100,100]`。

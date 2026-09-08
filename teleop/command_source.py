@@ -21,18 +21,49 @@ class CommandSample:
     enabled: bool = True
 
 
+def _resolve_bounds(minimum=None, maximum=None):
+    """Return finite [vx, vy, vyaw] command bounds for one input source."""
+    if minimum is None and maximum is None:
+        minimum = -CTRL.COMMAND_LIMITS
+        maximum = CTRL.COMMAND_LIMITS
+    elif minimum is None or maximum is None:
+        raise ValueError("minimum 和 maximum 必须同时提供")
+    minimum = np.asarray(minimum, dtype=np.float32)
+    maximum = np.asarray(maximum, dtype=np.float32)
+    if minimum.shape != (3,) or maximum.shape != (3,):
+        raise ValueError("command bounds must contain [vx, vy, vyaw]")
+    if not np.isfinite(minimum).all() or not np.isfinite(maximum).all():
+        raise ValueError("command bounds must be finite")
+    if np.any(minimum > maximum):
+        raise ValueError("command minimum cannot exceed maximum")
+    return minimum, maximum
+
+
+def _clip_velocity(velocity, minimum=None, maximum=None) -> np.ndarray:
+    minimum, maximum = _resolve_bounds(minimum, maximum)
+    values = np.asarray(velocity, dtype=np.float32)
+    if values.shape != (3,):
+        raise ValueError("velocity must contain [vx, vy, vyaw]")
+    if not np.isfinite(values).all():
+        raise ValueError("velocity must be finite")
+    return np.clip(values, minimum, maximum)
+
+
+def _scale_axis(raw, minimum, maximum):
+    """Map joystick [-1, 1] to an asymmetric command interval."""
+    raw = np.asarray(raw, dtype=np.float32)
+    return np.where(raw >= 0.0, raw * maximum, raw * (-minimum))
+
+
 class _VelocityState:
     """与输入设备无关的速度增量和裁剪逻辑。"""
 
-    def __init__(self, initial=(0.0, 0.0, 0.0)):
+    def __init__(self, initial=(0.0, 0.0, 0.0), minimum=None, maximum=None):
+        self._minimum, self._maximum = _resolve_bounds(minimum, maximum)
         self._velocity = self.clip(initial)
 
-    @staticmethod
-    def clip(velocity) -> np.ndarray:
-        values = np.asarray(velocity, dtype=np.float32)
-        if values.shape != (3,):
-            raise ValueError("velocity must contain [vx, vy, vyaw]")
-        return np.clip(values, -CTRL.COMMAND_LIMITS, CTRL.COMMAND_LIMITS)
+    def clip(self, velocity) -> np.ndarray:
+        return _clip_velocity(velocity, self._minimum, self._maximum)
 
     @property
     def velocity(self) -> np.ndarray:
@@ -53,8 +84,8 @@ class _VelocityState:
 class FixedCommandSource:
     """兼容原有 --vx/--vy/--vyaw 的固定命令。"""
 
-    def __init__(self, velocity):
-        self._state = _VelocityState(velocity)
+    def __init__(self, velocity, minimum=None, maximum=None):
+        self._state = _VelocityState(velocity, minimum, maximum)
 
     def read(self) -> CommandSample:
         return CommandSample(self._state.velocity)
@@ -71,14 +102,17 @@ class KeyboardCommandSource:
         "空格归零 | Esc 退出"
     )
 
-    def __init__(self, stream=None, linear_step: float = 0.05, yaw_step: float = 0.10):
+    def __init__(
+        self, stream=None, linear_step: float = 0.05, yaw_step: float = 0.10,
+        minimum=None, maximum=None,
+    ):
         self._stream = stream if stream is not None else sys.stdin
         if not self._stream.isatty():
             raise RuntimeError("keyboard control requires an interactive terminal")
         self._fd = self._stream.fileno()
         self._original_termios = termios.tcgetattr(self._fd)
         tty.setcbreak(self._fd)
-        self._state = _VelocityState()
+        self._state = _VelocityState(minimum=minimum, maximum=maximum)
         self._linear_step = linear_step
         self._yaw_step = yaw_step
         self._enabled = False
@@ -143,6 +177,8 @@ class XboxCommandSource:
         quit_button: int = 6,
         axis_indices: Tuple[int, int, int] = (1, 0, 3),
         axis_signs: Tuple[float, float, float] = (-1.0, -1.0, -1.0),
+        minimum=None,
+        maximum=None,
     ):
         self._device = device
         self._fd = os.open(device, os.O_RDONLY | os.O_NONBLOCK)
@@ -151,6 +187,7 @@ class XboxCommandSource:
         self._quit_button = quit_button
         self._axis_indices = axis_indices
         self._axis_signs = axis_signs
+        self._minimum, self._maximum = _resolve_bounds(minimum, maximum)
         self._axes: Dict[int, float] = {}
         self._buttons: Dict[int, bool] = {}
         self._quit = False
@@ -202,8 +239,12 @@ class XboxCommandSource:
             dtype=np.float32,
         )
         velocity = raw * np.asarray(self._axis_signs, dtype=np.float32)
-        velocity *= CTRL.COMMAND_LIMITS
-        return CommandSample(_VelocityState.clip(velocity), self._quit, True)
+        minimum = getattr(self, "_minimum", -CTRL.COMMAND_LIMITS)
+        maximum = getattr(self, "_maximum", CTRL.COMMAND_LIMITS)
+        velocity = _scale_axis(velocity, minimum, maximum)
+        return CommandSample(
+            _clip_velocity(velocity, minimum, maximum), self._quit, True
+        )
 
     def close(self) -> None:
         if self._fd is not None:

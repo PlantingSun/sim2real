@@ -47,12 +47,8 @@ def _state_from_payload(payload) -> RobotState:
     )
 
 
-def _depth_quality(sample, now_ns: int, min_valid_ratio: float) -> dict:
+def _depth_quality(sample, now_ns: int) -> dict:
     valid_ratio = float(np.mean(sample.valid != 0))
-    if valid_ratio < min_valid_ratio:
-        raise RuntimeError(
-            f"depth valid_ratio={valid_ratio:.4f} < min_valid_ratio={min_valid_ratio:.4f}"
-        )
     local_age_ms = (now_ns - sample.received_monotonic_ns) / 1.0e6
     source_processing_ms = (
         sample.source.publish_monotonic_ns - sample.source.capture_monotonic_ns
@@ -88,7 +84,6 @@ def run_go2wwmp_policy(
     depth_domain: int = 42,
     depth_topic: str = "rt/depth/image64",
     depth_max_age_ms: float = 100.0,
-    min_valid_ratio: float = 0.90,
     cpus=None,
     torch_threads: int = 1,
 ):
@@ -118,9 +113,7 @@ def run_go2wwmp_policy(
             time.sleep(0.01)
         if first_sample is None:
             raise RuntimeError("没有收到新鲜深度首帧，未进入 WMP 推理")
-        first_quality = _depth_quality(
-            first_sample, time.monotonic_ns(), min_valid_ratio
-        )
+        first_quality = _depth_quality(first_sample, time.monotonic_ns())
         conn.send({
             "event": "ready",
             "model_sha256": model_digest,
@@ -140,7 +133,7 @@ def run_go2wwmp_policy(
                     raise RuntimeError(
                         f"固定站姿接管前没有新鲜深度（max_age_ms={depth_max_age_ms:g}）"
                     )
-                quality = _depth_quality(sample, time.monotonic_ns(), min_valid_ratio)
+                quality = _depth_quality(sample, time.monotonic_ns())
                 session_rebased = sample.session_id != last_session
                 if session_rebased:
                     # Re-baselining is only allowed before LowCmd takeover.  A
@@ -151,10 +144,14 @@ def run_go2wwmp_policy(
                 continue
             if request[0] != "step":
                 raise RuntimeError(f"未知 WMP worker 请求: {request[0]!r}")
+            preview_requested = bool(len(request) > 3 and request[3])
             state = _state_from_payload(request[1])
             command = np.asarray(request[2], dtype=np.float32)
             if command.shape != (3,) or not np.isfinite(command).all():
                 raise ValueError("WMP worker 收到非法速度命令")
+            command = np.clip(
+                command, ControllerGo2wWMP.COMMAND_MIN, ControllerGo2wWMP.COMMAND_MAX
+            )
 
             sample = receiver.get_latest(max_age_ms=depth_max_age_ms)
             if sample is None:
@@ -162,7 +159,7 @@ def run_go2wwmp_policy(
                     f"深度过期或未收到新鲜帧（max_age_ms={depth_max_age_ms:g}）"
                 )
             now_ns = time.monotonic_ns()
-            quality = _depth_quality(sample, now_ns, min_valid_ratio)
+            quality = _depth_quality(sample, now_ns)
             previous_session = last_session
             session_changed = sample.session_id != previous_session
             if session_changed:
@@ -176,16 +173,21 @@ def run_go2wwmp_policy(
             inference_ms = (time.perf_counter() - start) * 1000.0
             if not np.isfinite(action).all():
                 raise RuntimeError("WMP action 包含 NaN/Inf")
-            conn.send({
+            response = {
                 "event": "step",
                 "session_changed": bool(session_changed),
                 "previous_depth_session": int(previous_session),
+                "command": command,
                 "inference_ms": float(inference_ms),
                 "needs_depth_update": bool(depth_m is not None),
                 "action": np.asarray(action, dtype=np.float32),
                 **_motor_arrays(motor_command),
                 **quality,
-            })
+            }
+            if preview_requested:
+                response["depth_preview"] = np.asarray(sample.depth_m, dtype=np.float32)
+                response["depth_preview_valid"] = np.asarray(sample.valid, dtype=np.uint8)
+            conn.send(response)
     except (EOFError, BrokenPipeError):
         pass
     except Exception as exc:

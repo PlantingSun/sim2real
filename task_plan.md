@@ -105,9 +105,10 @@ go2wwmp 笔记本实机入口。所有会发送 LowCmd 或调用 Sport Mode 的�
 
 ## Next Step
 
-用户已完成 guide 19 的四项深度接收验收，并完成 guide 20 的 print-only 与地面承重固定站姿数据链路。
-WMP action 的显式 5 秒入口和限位检查已经写好，下一步是由用户现场执行并分析该短测；尚未进入
-更长时间、行走或障碍测试。
+用户已完成 guide 19 的四项深度接收验收，并完成 guide 20 的 print-only、固定站姿和 5 秒 action
+短测。当前 guide 21 的 Xbox 手柄接入、无限时长入口和 5 Hz 深度预览已经完成；下一步由用户先
+执行离线映射与 print-only，再在保护条件下运行长时间 action。尚未进入自由行走或障碍测试；
+Unitree 原生控制保持独立，不与 WMP LowCmd 同时运行。
 
 ## Phase 9 Scope（历史记录）
 
@@ -392,11 +393,14 @@ Pipe 往返均值从 `2.507 ms` 降到 `1.878 ms`。下一步只执行 `guide/17
   人工阶段确认、日志和 fail-closed 状态机；默认 dry-run 完全不调用 StandUp/ReleaseMode/Write。
 - `tests/test_go2wwmp_real_pipeline.py` 与新 guide：覆盖集成故障和明确的用户运行顺序。
 
-当前第 20 步入口采用更小的实际状态机；尚未把 WMP action 解锁为真实动作：
+第 20 步验收入口继续保留分阶段状态机；WMP action、Xbox 和 Unitree 输入均已由用户完成实机
+测试；正式 Unitree 长期运行由独立入口实现单一路径，不再调用分阶段验收脚本：
 
 ```text
 BOOT → MODEL_READY → DEPTH_READY → DRY_RUN_READY
                          └─ --ground-stand --arm → FIXED_GROUND_STAND
+                              └─ --enable-wmp-action → WMP_ACTION
+Unitree 正式入口：原生站稳 → L2+R2 → ReleaseMode → WMP_ACTION → Select/Ctrl+C
 任一故障 / Ctrl+C → FAULT（已启动 LowCmd 时先进入阻尼）
 session_changed → dry-run reset 并记录，固定站姿 FAULT；depth_stale → FAULT
 ```
@@ -414,21 +418,28 @@ session_changed → dry-run reset 并记录，固定站姿 FAULT；depth_stale �
       都停止本轮。固定站姿阶段任何此类故障都进入阻尼并退出；当前没有自动恢复或自动重臂。
 - [ ] 为 `DdsDriver` 增加默认关闭、仅由 WMP 入口显式启用的 LowState/新命令 freshness watchdog，
       防止主进程卡死时 500 Hz 线程无限重复旧 action；任何修改不得改变现有 go2w/go2wcr 默认行为。
-- [x] WMP 实机入口默认 dry-run；真实动作必须显式 `--arm`、交互终端、固定站姿接管确认和独立的
-      WMP 使能确认。不得提供默认开启或静默跳过阶段确认的选项。
+- [x] 分阶段验收入口默认 dry-run；正式 Unitree 入口只在用户完成短时验收后新增，并仍要求机器人
+      原生站稳及 L2+R2 新按下沿，不能静默 ReleaseMode 或自行 StandUp。
 - [ ] 日志已包含 state/depth session+frame、valid ratio、depth/processing/local age、推理时间、
       action 和 MotorCommand；仍需补充显式 IPC/loop deadline、故障原因和状态机迁移字段，且要
       再审查写盘是否会影响控制周期。
-- [x] 腿关节 q 限位已按 `assets/go2w_description/mjcf/go2w.xml` 写入 DDS 16 路映射，所有 dq/轮速
-      上限按用户要求设为 `30 rad/s`；驱动会在状态和待发送命令两侧检查限位。
-- [ ] 完成显式 `--enable-wmp-action --duration 5` 的保护架/急停短测，并分析 action 日志；短测前
-      不进入更长时间、移动或障碍测试。
+- [x] MJCF q range 保留为配置参考但不参与保护；按用户要求取消命令侧 q/dq 检查，驱动只对
+      LowState 实测 `dq > 30 rad/s` 执行电机超速急停。
+- [x] 已完成 5 秒 WMP action、Xbox 长测/台阶测试及 30 秒 Unitree action 验收；后者 1500 个
+      50 Hz 周期全部实际发送 action，且没有深度 session 改变。
+- [x] 删除 `valid_ratio` 对 WMP 运行的硬失能门槛；保留有效率作为诊断字段，不因无效比例变大直接
+      进入阻尼。深度过期、session、畸形包和 NaN/Inf 仍单独处理，不能与有效率混淆。
+- [x] 已录制并分析约 2 分钟真实环境序列：无效区域统计支持继续使用 `2 m + valid=0`，暂不做
+      连通域/邻域填补；但记录存在约 50.9 s 接收空档，不能当作连续链路稳定性证明。
+- [x] 已加入只读录制与离线分析工具；真实序列已完成首轮分析，后续若改变处理规则需另做对照。
+- [x] 已在地面承重、保护架/急停覆盖下完成固定站姿、短时 action、手柄移动和台阶测试，并按每轮
+      日志继续修正流程。
 
 ## Phase 32 — 离线、仿真与完全只读端到端验证（pending）
 
 - [ ] 保留并通过现有 WMP 6 项测试、depth transport 测试、go2w/go2wcr 回归。
 - [ ] 新增 fake depth 流测试：未收到首帧、过期、重复/逆序、畸形、低有效率、session 改变、
-      receiver 异常；验证旧图/旧 action 不会继续进入 WMP。
+      receiver 异常；验证低有效率仍进入 WMP 但被记录，过期/畸形/会话异常不会静默复用旧图。
 - [ ] 新增 policy 超时/崩溃、LowState 过期、watchdog、dry-run 零 Write、退出阻尼测试；
       使用 mock driver，不连接机器人。
 - [ ] 用固定随机种子和同一 state/depth 序列，对 simulation 调用路径与实机 worker 做逐帧对照，

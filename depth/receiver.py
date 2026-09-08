@@ -16,6 +16,7 @@ from cyclonedds.qos import Policy, Qos
 from cyclonedds.sub import DataReader
 from cyclonedds.topic import Topic
 
+from config.go2w_config import DDS
 from depth.postprocess import preprocess_depth_for_wmp
 
 
@@ -250,7 +251,8 @@ class DepthReceiver:
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--interface", required=True)
+    parser.add_argument("--interface", default=DDS.DEPTH_NET_IF,
+                        help=f"深度 DDS 网卡；默认读取 go2w_config.DDS.DEPTH_NET_IF={DDS.DEPTH_NET_IF}")
     parser.add_argument("--domain", type=int, default=42)
     parser.add_argument("--topic", default="rt/depth/image64")
     parser.add_argument("--duration", type=float, default=0)
@@ -267,7 +269,7 @@ def main():
     )
     args = parser.parse_args()
     if not args.interface or not args.interface.strip():
-        parser.error("--interface is empty; set DEPTH_IF to the actual wired NIC from 'ip -br addr'")
+        parser.error("--interface 不能为空；请在 config/go2w_config.py 中确认固定网口")
     if args.duration < 0:
         parser.error("--duration must be nonnegative; use 0 to run until interrupted")
     output = None

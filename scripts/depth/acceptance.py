@@ -10,6 +10,7 @@ import subprocess
 import time
 
 import numpy as np
+from config.go2w_config import DDS
 from depth.postprocess import preprocess_depth_for_wmp
 from depth.receiver import DepthReceiver
 
@@ -25,7 +26,7 @@ def process_usage(pid):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--interface", default="eth0")
+    parser.add_argument("--interface", default=DDS.DEPTH_NET_IF)
     parser.add_argument("--domain", type=int, default=42)
     parser.add_argument("--duration", type=float, default=1800)
     parser.add_argument("--output-dir", required=True)

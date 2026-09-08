@@ -2,63 +2,15 @@
 """只读订阅 Go2W LowState，检查原装遥控器字节、摇杆和按钮映射。"""
 
 import argparse
-from dataclasses import dataclass
 import struct
 import threading
 import time
-from typing import Dict, Tuple
 
 from unitree_sdk2py.core.channel import ChannelFactoryInitialize, ChannelSubscriber
 from unitree_sdk2py.idl.unitree_go.msg.dds_ import LowState_
 
 from config.go2w_config import DDS
-
-
-@dataclass(frozen=True)
-class UnitreeRemoteState:
-    """Go2W LowState.wireless_remote[40] 的解析结果。"""
-
-    lx: float
-    ly: float
-    rx: float
-    ry: float
-    buttons: Dict[str, bool]
-    raw: bytes
-
-    @classmethod
-    def parse(cls, wireless_remote) -> "UnitreeRemoteState":
-        raw = bytes(wireless_remote)
-        if len(raw) != 40:
-            raise ValueError(f"wireless_remote must be 40 bytes, got {len(raw)}")
-
-        byte1, byte2 = raw[2], raw[3]
-        buttons = {
-            "R1": bool(byte1 & (1 << 0)),
-            "L1": bool(byte1 & (1 << 1)),
-            "Start": bool(byte1 & (1 << 2)),
-            "Select": bool(byte1 & (1 << 3)),
-            "R2": bool(byte1 & (1 << 4)),
-            "L2": bool(byte1 & (1 << 5)),
-            "F1": bool(byte1 & (1 << 6)),
-            "F3": bool(byte1 & (1 << 7)),
-            "A": bool(byte2 & (1 << 0)),
-            "B": bool(byte2 & (1 << 1)),
-            "X": bool(byte2 & (1 << 2)),
-            "Y": bool(byte2 & (1 << 3)),
-            "Up": bool(byte2 & (1 << 4)),
-            "Right": bool(byte2 & (1 << 5)),
-            "Down": bool(byte2 & (1 << 6)),
-            "Left": bool(byte2 & (1 << 7)),
-        }
-        lx = struct.unpack_from("<f", raw, 4)[0]
-        rx = struct.unpack_from("<f", raw, 8)[0]
-        ry = struct.unpack_from("<f", raw, 12)[0]
-        ly = struct.unpack_from("<f", raw, 20)[0]
-        return cls(lx=lx, ly=ly, rx=rx, ry=ry, buttons=buttons, raw=raw)
-
-    @property
-    def active_buttons(self) -> Tuple[str, ...]:
-        return tuple(name for name, pressed in self.buttons.items() if pressed)
+from teleop.unitree_remote import UnitreeRemoteState
 
 
 def main():

@@ -225,11 +225,10 @@ python scripts/real/test_policy_unitree_remote.py
 Xbox 映射为左摇杆纵轴→`vx`、左摇杆横轴→`vy`、右摇杆横轴→`vyaw`；A 是 deadman，
 Back 退出。不要直接推满摇杆；满行程会映射到 `CTRL.COMMAND_LIMITS`。
 
-## 逐关节限位
+## 当前限位策略
 
-吊架测试时记录 DDS 0–11 的真实 `q/dq` 范围，再在
-`config/go2w_config.py` 中逐项填写 `DDS.JOINT_LIMITS`。必须给正常运动留出裕量，
-不要改回统一的循环推导值。四个轮子的速度由 `DDS.WHEEL_VEL_LIMIT` 单独检查。
+当前版本不启用关节位置 q 限位，`DDS.JOINT_LIMITS` 中的 q 字段仅保留为 MJCF 参考。
+命令侧不做 `dq` 限幅；只有 LowState 实测 `dq > 30 rad/s` 会触发急停，四个轮子也使用同一实测速度上限。
 
 ## 通过标准
 

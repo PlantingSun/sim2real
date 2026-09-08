@@ -7,7 +7,9 @@
 
 完成基础 go2w 链路后，go2wcr/CRRL 按 `06_crrl_policy_test.md` →
 `07_crrl_simulation_test.md` → `08_crrl_real_test.md` 执行；脚本归档规则见
-`09_scripts_layout.md`。go2wwmp 当前只进入离线/仿真验证，见 `11_wmp_simulation_test.md`。
+`09_scripts_layout.md`。Go2WWMP 的跨机深度、真机链路和手柄验收分别见
+`19.5_depth_validation_record.md`、`20_go2wwmp_real_validation.md` 和
+`21_go2wwmp_xbox_input.md`、`22_go2wwmp_unitree_remote.md`。
 
 | 步骤 | 文档 | 目标 |
 |------|------|------|
@@ -16,6 +18,9 @@
 | 3 | `03_simulation_test.md` | 在 MuJoCo 中跑通完整控制链 |
 | 4 | `04_command_input.md` | 离线核对键盘、Xbox 和原装遥控器 |
 | 5 | `05_real_test.md` | 固定位置环接管、零速 policy 站立、手柄行走 |
+| 20 | `20_go2wwmp_real_validation.md` | Go2WWMP domain 0/42 数据链路、站立和 action 短测 |
+| 21 | `21_go2wwmp_xbox_input.md` | Go2WWMP 手柄命令约束、只读和低速短测 |
+| 22 | `22_go2wwmp_unitree_remote.md` | Go2WWMP 宇树原装遥控器验收与正式长期运行入口 |
 
 ## 控制链
 
@@ -50,8 +55,12 @@ Policy 以 50 Hz 更新目标，DDS 线程以 500 Hz 重复发送最新目标。
 
 - `CTRL`：网络维度、初始关节位置、动作缩放、PD 增益、策略频率和速度输入限幅。
 - `DDS`：网卡、Domain、Topic、500 Hz 频率、stop 值、关节限位和紧急阻尼参数。
+- 当前笔记本固定网口为 `DDS.LAPTOP_NET_IF`（`enp0s31f6`），深度 domain 42 默认复用
+  `DDS.DEPTH_NET_IF`；常用 Python 入口无需手动 export 网卡。
 - `DDS.JOINT_LIMITS` 按 DDS 0–11 逐关节列出；`None` 表示该项暂不检查，需要根据
   实机观测结果逐项填写。
+- `q_min/q_max` 当前仅保留为 MJCF 参考，不启用位置保护；固定 Kp 的 MotorCommand 可以超出 q 范围。
+  命令侧 q/dq 都不做限幅，只有 LowState 实测 `dq > 30 rad/s` 做超限急停。
 - `DDS.WHEEL_VEL_LIMIT` 单独限制四个轮子的速度。
 
 ## 环境
@@ -102,4 +111,5 @@ source setup.sh robot    # Unitree DDS；绑定实机网卡
 - 宇树遥控器方案没有 deadman；摇杆离开中心就会产生速度指令，回中后由 deadzone
   归零。原装手柄长按按键会蜂鸣，因此不使用 A 持续使能。
 - 第一次固定位置接管、第一次零速 policy 和第一次手柄控制都应使用架子或吊绳。
-- 当前逐关节限位仍包含 `None` 时，对应字段没有软件保护，不能把它当作已启用的限位。
+- 当前版本不启用 q 位置限位；`DDS.JOINT_LIMITS` 中的 q 字段仅作 MJCF 参考。命令侧 q/dq
+  都不做限幅，电机相关保护只保留 LowState 实测 `dq > 30 rad/s` 急停。

@@ -4,7 +4,7 @@
 import argparse
 import time
 
-from config.go2w_config import DDS
+from config.go2w_config import CTRL, DDS
 from teleop.command_source import KeyboardCommandSource, XboxCommandSource
 
 
@@ -13,14 +13,20 @@ def main():
     parser.add_argument("--control", choices=("keyboard", "xbox"), default="keyboard")
     parser.add_argument("--joystick", default=DDS.DEFAULT_JOYSTICK)
     parser.add_argument("--hz", type=float, default=20.0)
+    parser.add_argument(
+        "--wmp-bounds", action="store_true",
+        help="使用 Go2WWMP 命令包络：vx[-0.2,1.0]、vy=0、vyaw[-1.0,1.0]",
+    )
     args = parser.parse_args()
     if args.hz <= 0.0:
         parser.error("--hz must be positive")
 
+    minimum = CTRL.WMP_COMMAND_MIN if args.wmp_bounds else None
+    maximum = CTRL.WMP_COMMAND_MAX if args.wmp_bounds else None
     source = (
-        KeyboardCommandSource()
+        KeyboardCommandSource(minimum=minimum, maximum=maximum)
         if args.control == "keyboard"
-        else XboxCommandSource(args.joystick)
+        else XboxCommandSource(args.joystick, minimum=minimum, maximum=maximum)
     )
     print("[OFFLINE] this script does not import DDS or connect to the robot")
     try:

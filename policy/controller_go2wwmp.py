@@ -40,6 +40,8 @@ class ControllerGo2wWMP:
     WM_FEATURE_DIM = 512
     WM_LATENT_DIM = 40
     COMMAND_SCALE = torch.tensor((1.0, 1.0, 0.25), dtype=torch.float32)
+    COMMAND_MIN = CTRL.WMP_COMMAND_MIN
+    COMMAND_MAX = CTRL.WMP_COMMAND_MAX
 
     def __init__(self, model_path: str, config_path=None):
         self.initial_pos = torch.tensor(CTRL.INITIAL_JOINTS_POS, dtype=torch.float32)
@@ -255,7 +257,10 @@ class ControllerGo2wWMP:
             raise ValueError(f"cmd_vel 必须是 [vx, vy, vyaw]，实际为 {command.shape}")
         if not np.isfinite(command).all():
             raise ValueError("cmd_vel 包含 NaN 或 Inf")
-        command = np.clip(command, -CTRL.COMMAND_LIMITS, CTRL.COMMAND_LIMITS)
+        # Keep every caller, including fixed commands and future input devices,
+        # inside the WMP training envelope.  In particular, lateral velocity is
+        # intentionally fixed at zero for this policy.
+        command = np.clip(command, self.COMMAND_MIN, self.COMMAND_MAX)
         if self.needs_depth_update and depth_m is None:
             raise ValueError("当前 WMP 帧需要一张 64×64 米制深度图")
         prop, obs_now, obs_history = self.build_observation(state, command)
