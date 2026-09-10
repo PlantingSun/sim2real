@@ -114,12 +114,12 @@ class DDS:
         {"q_min": -1.0472, "q_max": 1.0472, "dq_max": 30.0},       # DDS 9: RL hip
         {"q_min": -1.0236, "q_max": 4.5379, "dq_max": 30.0},       # DDS 10: RL thigh
         {"q_min": -2.7227, "q_max": -0.83776, "dq_max": 30.0},     # DDS 11: RL calf
-        {"q_min": -999999.0, "q_max": 999999.0, "dq_max": 30.0},  # DDS 12: FR wheel
-        {"q_min": -999999.0, "q_max": 999999.0, "dq_max": 30.0},  # DDS 13: FL wheel
-        {"q_min": -999999.0, "q_max": 999999.0, "dq_max": 30.0},  # DDS 14: RR wheel
-        {"q_min": -999999.0, "q_max": 999999.0, "dq_max": 30.0},  # DDS 15: RL wheel
+        {"q_min": -999999.0, "q_max": 999999.0, "dq_max": 80.0},  # DDS 12: FR wheel
+        {"q_min": -999999.0, "q_max": 999999.0, "dq_max": 80.0},  # DDS 13: FL wheel
+        {"q_min": -999999.0, "q_max": 999999.0, "dq_max": 80.0},  # DDS 14: RR wheel
+        {"q_min": -999999.0, "q_max": 999999.0, "dq_max": 80.0},  # DDS 15: RL wheel
     ]
-    WHEEL_VEL_LIMIT = 30.0
+    WHEEL_VEL_LIMIT = 80.0
     EMERGENCY_DAMPING_KD = 8.0
 
     SPORT_MODE_TIMEOUT = 5.0

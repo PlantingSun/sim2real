@@ -19,6 +19,7 @@ import torch
 from depth.receiver import DepthReceiver
 from driver.driver_base import RobotState
 from policy.controller_go2wwmp import ControllerGo2wWMP
+from telemetry.observation_recorder import ObservationRecorder
 
 
 def file_sha256(path: str) -> str:
@@ -86,6 +87,8 @@ def run_go2wwmp_policy(
     depth_max_age_ms: float = 100.0,
     cpus=None,
     torch_threads: int = 1,
+    observation_dir=None,
+    source_log=None,
 ):
     """Load WMP and serve bounded state→candidate-command requests.
 
@@ -99,6 +102,7 @@ def run_go2wwmp_policy(
     torch.set_num_interop_threads(1)
 
     receiver = None
+    observation_recorder = None
     try:
         model_digest = file_sha256(model_path)
         controller = ControllerGo2wWMP(model_path)
@@ -114,6 +118,13 @@ def run_go2wwmp_policy(
         if first_sample is None:
             raise RuntimeError("没有收到新鲜深度首帧，未进入 WMP 推理")
         first_quality = _depth_quality(first_sample, time.monotonic_ns())
+        if observation_dir is not None:
+            observation_recorder = ObservationRecorder(
+                Path(observation_dir),
+                source_log=Path(source_log) if source_log is not None else Path(""),
+                model_path=model_path,
+                model_sha256=model_digest,
+            )
         conn.send({
             "event": "ready",
             "model_sha256": model_digest,
@@ -145,6 +156,12 @@ def run_go2wwmp_policy(
             if request[0] != "step":
                 raise RuntimeError(f"未知 WMP worker 请求: {request[0]!r}")
             preview_requested = bool(len(request) > 3 and request[3])
+            record_observation = bool(len(request) > 4 and request[4])
+            record_loop = int(request[5]) if len(request) > 5 else 0
+            timestamp_wall_ns = int(request[6]) if len(request) > 6 else 0
+            timestamp_monotonic_ns = int(request[7]) if len(request) > 7 else 0
+            state_tick = int(request[8]) if len(request) > 8 else 0
+            state_age_ms = float(request[9]) if len(request) > 9 else 0.0
             state = _state_from_payload(request[1])
             command = np.asarray(request[2], dtype=np.float32)
             if command.shape != (3,) or not np.isfinite(command).all():
@@ -187,6 +204,28 @@ def run_go2wwmp_policy(
             if preview_requested:
                 response["depth_preview"] = np.asarray(sample.depth_m, dtype=np.float32)
                 response["depth_preview_valid"] = np.asarray(sample.valid, dtype=np.uint8)
+            if record_observation and not session_changed:
+                if observation_recorder is None:
+                    raise RuntimeError("请求保存 observation，但 recorder 未初始化")
+                observation_recorder.append(
+                    timestamp_wall_ns=timestamp_wall_ns,
+                    timestamp_monotonic_ns=timestamp_monotonic_ns,
+                    loop=record_loop,
+                    state_tick=state_tick,
+                    state_age_ms=state_age_ms,
+                    command=command,
+                    state=state,
+                    snapshot=controller.observation_snapshot(),
+                    depth_session=quality["depth_session"],
+                    depth_frame=quality["depth_frame"],
+                    depth_valid_ratio=quality["depth_valid_ratio"],
+                    depth_invalid_pixels=quality["depth_invalid_pixels"],
+                    depth_local_age_ms=quality["depth_local_age_ms"],
+                    depth_source_processing_ms=quality["depth_source_processing_ms"],
+                    needs_depth_update=bool(depth_m is not None),
+                    depth_m=sample.depth_m if depth_m is not None else None,
+                    depth_valid=sample.valid if depth_m is not None else None,
+                )
             conn.send(response)
     except (EOFError, BrokenPipeError):
         pass
@@ -196,6 +235,8 @@ def run_go2wwmp_policy(
         except (EOFError, BrokenPipeError):
             pass
     finally:
+        if observation_recorder is not None:
+            observation_recorder.close()
         if receiver is not None:
             receiver.close()
         conn.close()

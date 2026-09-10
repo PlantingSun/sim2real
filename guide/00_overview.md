@@ -9,7 +9,9 @@
 `07_crrl_simulation_test.md` → `08_crrl_real_test.md` 执行；脚本归档规则见
 `09_scripts_layout.md`。Go2WWMP 的跨机深度、真机链路和手柄验收分别见
 `19.5_depth_validation_record.md`、`20_go2wwmp_real_validation.md` 和
-`21_go2wwmp_xbox_input.md`、`22_go2wwmp_unitree_remote.md`。
+`21_go2wwmp_xbox_input.md`、`22_go2wwmp_unitree_remote.md`；正式运行日志的字段、顺序和
+读取方式见 `22.5_go2wwmp_log_format.md`。
+正式入口的可开关航向保持见 `23_go2wwmp_heading_mode.md`。
 
 | 步骤 | 文档 | 目标 |
 |------|------|------|
@@ -21,6 +23,8 @@
 | 20 | `20_go2wwmp_real_validation.md` | Go2WWMP domain 0/42 数据链路、站立和 action 短测 |
 | 21 | `21_go2wwmp_xbox_input.md` | Go2WWMP 手柄命令约束、只读和低速短测 |
 | 22 | `22_go2wwmp_unitree_remote.md` | Go2WWMP 宇树原装遥控器验收与正式长期运行入口 |
+| 22.5 | `22.5_go2wwmp_log_format.md` | 正式 Go2WWMP 自动 JSONL 日志格式、字段语义和对接方式 |
+| 23 | `23_go2wwmp_heading_mode.md` | A/B 开关的固定前进速度与 yaw 航向保持模式 |
 
 ## 控制链
 

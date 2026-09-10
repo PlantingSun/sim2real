@@ -29,6 +29,7 @@ import numpy as np
 
 from config.go2w_config import CTRL, DDS, DDS_IDX_FROM_CTRL
 from config.paths import model_path
+from depth.opencv_display import load_cv2_for_gui
 from driver.dds_driver import DdsDriver
 from driver.driver_base import MotorCommand
 from policy.process_worker_go2wwmp import run_go2wwmp_policy
@@ -375,8 +376,7 @@ def main():
         print("[COMMAND SOURCE] ready; input is clipped to the configured field cap and WMP envelope")
         if display_enabled:
             try:
-                import cv2
-                cv2_module = cv2
+                cv2_module = load_cv2_for_gui()
                 cv2_module.namedWindow("go2wwmp depth", cv2_module.WINDOW_NORMAL)
                 print(f"[DEPTH DISPLAY] enabled at {args.depth_display_hz:g} Hz; q/Esc closes the window")
             except Exception as exc:

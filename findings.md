@@ -1,5 +1,75 @@
 # 调研与审查发现
 
+## 2026-09-09：Go2WWMP 航向保持功能（完成）
+
+- 正式入口的主循环已经同时持有最新 `RobotState.imu_rpy[2]` 和原装遥控器命令，航向闭环应放在
+  主进程命令进入 WMP worker 之前；不需要改 WMP 网络、深度 worker 或 500 Hz LowCmd 线程。
+- 为保持正式状态机简洁，航向计算放入独立 `teleop/heading_mode.py`。A 的新按下沿开启并记录
+  当前 yaw，B 的新按下沿关闭；启动前已经按住的 A 不得在接管首帧误触发。
+- 开启后输出固定 `vx=0.5 m/s`、`vy=0`，`vyaw=clip(kp*wrap(target-current),-1,1)`；关闭后恢复
+  既有 `vx=Ly, vy=0, vyaw=-Rx`。Select、深度/状态故障和既有 fail-closed 路径保持不变。
+- 当前 runner 还有未提交的观测归档与 OpenCV 修正，改动必须在这些现有变化之上局部集成，不能
+  覆盖 `observation_dir`、worker 消息扩展或日志忽略规则。
+- 已实现独立航向模块并在正式入口接入；最终 command 仍通过原 WMP worker 的既有 command bounds
+  进入网络，观测归档中的 `command` 因而自动保存航向模式实际输入，无需修改 worker 数据结构。
+- 主 JSONL 增加 mode/event/target/current/error 五个航向字段；终端只在 A/B 状态变化时即时打印，
+  其余仍沿用每秒摘要，避免新增高频 I/O。
+- 航向模块及 real pipeline 定向测试共 15 项通过；尚需检查日志 guide 后半段示例和运行完整回归。
+- guide 22.5 的正式 JSONL schema 已从 22 个扩展为 27 个字段，流式校验示例同步要求五个航向
+  字段；guide 23 记录了按键、公式、现场顺序、关闭语义和异常停止条件。
+- 完整离线回归最终为 30 项 unittest（2 项按环境预期跳过），输入映射脚本、正式入口 `--help`、
+  Python 编译和 `git diff --check` 全部通过；未初始化 DDS 或执行实机控制。
+
+## 2026-09-09：全量文档复核（完成）
+
+- 当前审阅范围共有 50 个 Markdown、约 5600 行，其中 `guide/` 有 29 篇；另含根 README、
+  Orin 入门、模型/脚本/日志说明以及既有规划记录。
+- 当前总体架构已经明确收敛为：Orin NX 只负责 D435i 采集、处理并在 DDS domain 42 发布；
+  笔记本负责 Unitree domain 0 的 LowState/LowCmd 和 go2wwmp policy，深度订阅位于独立子进程，
+  不进入 500 Hz LowCmd 线程。
+- 文档将历史 Orin policy 路线、现行笔记本控制路线和只读深度链路分开保存；后续判断必须以
+  guide 18.5/19/19.5/20/21/22 及 `task_plan.md` 的 Next Step 为当前事实，不能把早期路线当成现行步骤。
+- 已读根 README、资源/模型/脚本/日志说明和全部 Orin onboarding。权重不进 Git；当前 WMP
+  simulation 默认 `model_6000.pt`。真实控制脚本必须由用户现场运行，助手不启动 LowCmd 或 Sport Mode。
+- 已读 guide 00–12：go2w/go2wcr 章节主要是已完成的基础和历史 Orin 实验；WMP 数值语义以
+  guide 12 的复审结果为准：controller 接收正米制 `64×64` 深度，在内部执行
+  `clip(depth,0,2)/2-0.5`，Dreamer encoder 仍保留训练时已有的第二次 `-0.5`。
+- WMP 时序为 policy 50 Hz、world model 10 Hz，每次 RSSM 更新消费连续 5 个 policy action，
+  并使用上一张 10 Hz 深度以复现约 100 ms 的训练延迟；旧的稀疏 action 历史 bug 已修复。
+- `guide/12_orin_environment.md` 中“仓库后续只服务 Orin、不保留笔记本”的表述已经被后续架构
+  推翻，属于历史阶段说明；当前运行事实应以根 README、guide 18.5 以后和 `setup.sh` 的
+  laptop/orin profile 为准。
+- 基础安全边界仍有明显空缺：12 个腿关节命令侧 q/dq 限位未启用，当前只有 LowState 实测
+  `dq > 30 rad/s` 和轮速保护；这是任何新实机功能设计都必须正视的阻塞项。
+- guide 13–17 解释了 Orin policy 路线为何暂停：WMP world-model 更新帧在 Orin CPU 上约
+  31 ms，且 Go2W 的约 8.4–8.5 Hz 抖动在 C++ DDS 后端仍复现；因此 Python DDS/GIL、模型
+  文件、跨架构数值误差、Pipe 内容和 500 Hz Write 节拍均已被证据大幅降级为主因。
+- ONNX 能将 Go2W actor/完整帧延时降到约 `0.106/1.204 ms` 且误差小，但当时未用 ONNX
+  发送真实 action；随着控制路线回到笔记本，这属于历史实验资产，不是当前 WMP 主线。
+- guide 18.5–22 是现行主线：D435i 在 Orin 以 USB2 `480×270 Z16@60` 采集，经空间滤波和
+  58°×58° 最近邻投影后发布 `float32 64×64` 米制深度与 valid mask；domain 42、
+  BEST_EFFORT/KEEP_LAST(1)，无效深度传 2 m，但 valid=0。
+- 底行固定无效是投影边界 bug，已通过夹到最近真实传感器边缘修复；真实图有效率约
+  `0.74–1.0`、中位约 `0.927`，仍明显偏离无噪声 simulation。当前不补洞、不改成近障碍、
+  不把 valid 加入网络输入，也不再用 `min_valid_ratio` 作为运行门槛。
+- guide 19 的跨机四项验收已由规划记录标为完成；guide 20 的 print-only、固定承重站姿、
+  5 秒 action 已完成，guide 22 的原装遥控器 30 秒接管也已完成。正式入口为
+  `scripts/real/run_go2wwmp_unitree.py`，默认 model_6000、原装手柄、无限时长、2 Hz 深度预览。
+- 当前下一步不是再次搭链路或重复已完成的手柄验收，而是补齐 watchdog、周期/状态迁移日志和
+  故障回归，再进入长期 action、自由行走和障碍递进测试。任何后续小功能应优先服务 fail-closed、
+  现场可观察性、可复现实验和退出/接管安全，而不是改变训练输入语义。
+- 已补读全部 4 个第三方 Markdown。其内容是 Unitree SDK2 Python 的上游安装/示例说明，
+  其中包含会发送高层或低层控制的示例；这些不是本项目的推荐实机入口，后续操作仍以本仓库
+  `scripts/real/` 的分级状态机和 guide 为准。
+- 现有规划还保留两类未闭环项：Phase 29 的最终 30 分钟持续测试、拔插/整机重启与物理距离/外参
+  验收；Phase 31 的 LowState/命令 freshness watchdog、IPC/loop deadline、故障原因与状态迁移日志。
+  这些比继续扩展 UI 或控制模式更适合作为后续实机优化的第一优先级。
+- 文档状态存在轻微漂移：`task_plan.md` 的 Next Step 仍说需先做原装遥控器离线映射/print-only，
+  但 guide 22 和后续 findings 已记录 30 秒 Unitree action 通过并创建正式入口。后续修改前应先把
+  “已完成现场事实、尚缺自动化回归、尚缺耐久/故障演练”拆开，避免重复测试或误报完成度。
+- 已据此校正 `task_plan.md` 的 Next Step：不再重复已经完成的 Unitree 手柄验收，当前代码优化
+  优先落在 watchdog、状态迁移/周期诊断和故障回归，然后才进入长期动作、自由行走与障碍递进。
+
 ## 2026-08-27
 
 ### 当前状态
@@ -675,3 +745,56 @@
   WMP worker 和正式的 `teleop/unitree_remote.py` 仍作为明确的底层模块复用。
 - 与旧验收入口相比，正式入口先在 Sport Mode 保持站立时同步深度并缓存初始命令，再 ReleaseMode
   并立即启动 LowCmd，消除了释放后再等待深度 IPC 的空档；退出时先置阻尼再清理子进程/窗口。
+
+## 2026-09-09：OpenCV Qt 字体警告与 VS Code cv2 提示
+
+- 笔记本 `unitree_py38` 实际使用 `opencv-python 4.13.0.92`，GUI 后端为 Qt 5.15.18；`cv2` 可以正常
+  导入，黄色下划线不是运行时缺包证据。
+- 该 wheel 的 `cv2/config-3.py` 在导入时把 `QT_QPA_FONTDIR` 强制设为包内 `cv2/qt/fonts`，但当前
+  wheel 只含 `cv2/qt/plugins`、没有 `fonts` 目录，因此首次 `namedWindow()` 初始化 Qt 时重复输出
+  `QFontDatabase: Cannot find font directory`。
+- 系统已有 `/usr/share/fonts/truetype/dejavu` 且 `fc-match sans` 正常返回 DejaVu Sans；可在导入
+  cv2 后、创建窗口前把 `QT_QPA_FONTDIR` 改到该现有目录，无需下载字体或修改 Conda 包。
+- `.vscode/settings.json` 当前只指定 Conda 作为环境管理器，没有指定 `unitree_py38` 解释器；应补充
+  Python 默认解释器路径。已经打开过该 workspace 时，VS Code 可能保留旧选择，仍需重新选择解释器
+  或重载窗口一次。
+- 新增 `depth/opencv_display.py` 后，离线检查确认导入 cv2 后的 `QT_QPA_FONTDIR` 已从缺失路径改为
+  实际存在的 `/usr/share/fonts/truetype/dejavu`。正式 Unitree 入口、分阶段 WMP 验收入口和深度回放
+  共用该逻辑；它不改变图像数组、显示频率或控制数据。
+
+## 2026-09-09：Go2WWMP 自动 JSONL 日志格式核对
+
+- 正式入口每个完成推理并调用 `driver.send_command()` 的 50 Hz 周期写一行 JSON 对象；不是一个
+  JSON 数组。自动文件名为 `logs/real/go2wwmp_unitree_YYYYmmdd_HHMMSS_microseconds.jsonl`，也可用
+  `--log` 覆盖路径；同一运行在打开时使用写模式。
+- 当前真实样本与 `write_log()` 一致，共 22 个字段：事件/循环、速度命令、16 维网络动作、16 路
+  DDS MotorCommand、深度帧质量/时延、LowState tick/本地年龄和两个发送状态布尔值。
+- `action` 使用 Ctrl 顺序 `FL,FR,RL,RR`（每腿 hip/thigh/calf/foot）；`positions/velocities/kp/kd`
+  已转换为 DDS 顺序 `FR腿, FL腿, RR腿, RL腿, FR/FL/RR/RL wheel`。腿主要使用 q+Kp，轮子使用
+  dq+Kd，不能把 action 下标直接当作 MotorCommand 下标。
+- 当前日志不保存完整 LowState q/dq/IMU、原始或 64×64 深度图、valid mask、遥控器原始摇杆/按钮、
+  电池、实测电机力矩、checkpoint 路径/哈希、绝对墙钟时间、故障退出记录或阻尼记录。模型哈希只在
+  启动终端打印；异常通常发生在某行写入之前，因此 JSONL 可能正常截断而没有 error 行。
+- `wmp_action_sent=true` 只证明命令已进入 DdsDriver 最新缓存，500 Hz 线程随后异步发送；它不是
+  电机确认。正式入口先更新缓存再写日志，所以极端磁盘写入故障可能导致命令已更新但末行缺失。
+- 实际最新样本 1894 行、2,809,652 bytes，平均约 1.48 KB/周期，即约 4.45 MB/min、267 MB/h；
+  gzip 后约为原始大小的 24.5%。
+- session ID 已超过 JavaScript 的 `2^53-1` 安全整数范围；Python `json` 可保留精度，JS/ETL
+  对接不能用普通 Number 作为 session 身份键。
+
+## 2026-09-09：Go2WWMP 观测与深度实验归档
+
+- 用户需要后续实验保存 timestamp、全部 WMP observation 和深度，以便画图、比较和复现；不希望
+  在观测文件重复保存可由观测重算的 action/MotorCommand。
+- WMP actor 每周期实际使用 `obs_now[53]`、5 帧 `obs_history[250]` 和 world-model context
+  `wm_feature[512]`；控制器已增加只读 `observation_snapshot()`，不改变 action 或时序。
+- 正式入口默认生成与主 JSONL 同名的 `_obs/` 目录：每 250 个 policy 周期写一个未压缩 NPZ，
+  后台线程执行 NPZ/`fsync`，worker 控制请求只负责数组整理和队列入队。实际基准 250 帧约
+  1.95 MB；入队整理约 8 ms，完整写盘约 18 ms/5 秒块，平均磁盘约 7.8 KB/帧（约 23–25 MB/min）。
+- 深度只在 `needs_depth_update=true` 的行保存 64×64 米制图和 valid mask，非更新周期不重复写图；
+  每行仍保存深度 session/frame/valid/age 诊断。这样保留 world-model 的实际深度序列，同时避免
+  50 Hz 重复存储相同深度。
+- 每个观测目录包含 `manifest.json`（数组形状、模型 SHA-256、未保存字段）、`chunk_*.npz` 和
+  正常关闭后生成的 `summary.json`；异常退出时已完成 chunk 仍可读取。
+- `.gitignore` 已忽略 `logs/depth/*`、`logs/real/*`、`logs/policy/*` 并保留 README；已用
+  `git rm --cached` 将现有实验文件从 Git 索引移除，工作区本地文件未删除。

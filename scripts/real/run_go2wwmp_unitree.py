@@ -23,16 +23,24 @@ import numpy as np
 
 from config.go2w_config import CTRL, DDS, DDS_IDX_FROM_CTRL
 from config.paths import PROJECT_ROOT, model_path
+from depth.opencv_display import load_cv2_for_gui
 from driver.dds_driver import DdsDriver
 from driver.driver_base import MotorCommand
 from policy.process_worker_go2wwmp import run_go2wwmp_policy
+from teleop.heading_mode import (
+    HEADING_DISABLE_BUTTON,
+    HEADING_ENABLE_BUTTON,
+    HEADING_FORWARD_SPEED,
+    HEADING_YAW_KP,
+    HeadingModeController,
+)
 from teleop.unitree_remote import UnitreeRemoteCommandSource
 
 
 # 这些是已经实机验收的运行参数，不再暴露为日常命令行开关。
 DEPTH_DOMAIN = 42
 DEPTH_TOPIC = "rt/depth/image64"
-DEPTH_MAX_AGE_MS = 100.0
+DEPTH_MAX_AGE_MS = 1000.0
 LOWSTATE_MAX_AGE_MS = 100.0
 REMOTE_TIMEOUT_S = 0.5
 REMOTE_DEADZONE = 0.10
@@ -49,7 +57,7 @@ def default_log_path():
 
 
 def parse_args(argv=None):
-    """正式入口仅保留模型、日志和显示三个可选项。"""
+    """解析正式入口少量的文件与显示选项。"""
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
         "--model",
@@ -67,9 +75,26 @@ def parse_args(argv=None):
         action="store_true",
         help="关闭默认 2 Hz 的单幅深度预览",
     )
+    parser.add_argument(
+        "--observation-dir",
+        type=Path,
+        default=None,
+        help="观测归档目录；默认与 JSONL 同名加 _obs",
+    )
+    parser.add_argument(
+        "--no-observation-log",
+        action="store_true",
+        help="关闭观测归档（默认保存 timestamp、obs、深度和 world-model context）",
+    )
     args = parser.parse_args(argv)
     args.model = str(Path(args.model).expanduser())
     args.log = args.log or default_log_path()
+    if args.no_observation_log:
+        args.observation_dir = None
+    elif args.observation_dir is not None:
+        args.observation_dir = args.observation_dir.expanduser()
+    else:
+        args.observation_dir = args.log.with_name(args.log.stem + "_obs")
 
     if not Path(args.model).is_file():
         parser.error(f"找不到 WMP checkpoint: {args.model}")
@@ -148,6 +173,12 @@ def print_status(response, count):
         return
     action = np.asarray(response["action"])
     command = np.asarray(response["command"])
+    heading_text = ""
+    if response.get("heading_mode"):
+        heading_text = (
+            f" heading=ON target={response['heading_target_yaw_rad']:+.3f} "
+            f"error={response['heading_error_rad']:+.3f}"
+        )
     print(
         "[WMP] "
         f"frame={response['depth_frame']} session={response['depth_session']} "
@@ -156,6 +187,7 @@ def print_status(response, count):
         f"depth_age={response['depth_local_age_ms']:.1f}ms "
         f"infer={response['inference_ms']:.2f}ms "
         f"action=[{action.min():+.3f},{action.max():+.3f}]"
+        f"{heading_text}"
     )
 
 
@@ -215,6 +247,7 @@ def run(args):
     parent_conn = None
     child_conn = None
     command_source = None
+    heading_controller = None
     log_handle = None
     cv2_module = None
     lowcmd_started = False
@@ -245,6 +278,8 @@ def run(args):
                 DEPTH_MAX_AGE_MS,
                 None,
                 TORCH_THREADS,
+                str(args.observation_dir) if args.observation_dir is not None else None,
+                str(args.log),
             ),
         )
         worker.start()
@@ -260,6 +295,10 @@ def run(args):
             f"depth_session={ready['depth_session']} frame={ready['depth_frame']} "
             f"valid={ready['depth_valid_ratio']:.3f}"
         )
+        if args.observation_dir is not None:
+            print(f"[OBS] chunked archive={args.observation_dir}")
+        else:
+            print("[OBS] observation archive disabled")
 
         # 接管前必须先用真实 LowState + 深度完整跑通一帧 WMP，但不发送 action。
         state_deadline = time.monotonic() + 5.0
@@ -278,13 +317,17 @@ def run(args):
             minimum=CTRL.WMP_COMMAND_MIN,
             maximum=CTRL.WMP_COMMAND_MAX,
         )
+        heading_controller = HeadingModeController(
+            minimum=CTRL.WMP_COMMAND_MIN,
+            maximum=CTRL.WMP_COMMAND_MAX,
+            forward_speed=HEADING_FORWARD_SPEED,
+            yaw_kp=HEADING_YAW_KP,
+        )
 
         display_enabled = not args.no_depth_display
         if display_enabled:
             try:
-                import cv2
-
-                cv2_module = cv2
+                cv2_module = load_cv2_for_gui()
                 cv2_module.namedWindow("go2wwmp depth", cv2_module.WINDOW_NORMAL)
                 print(f"[DEPTH DISPLAY] 单幅预览 {DEPTH_DISPLAY_HZ:g} Hz")
             except Exception as exc:
@@ -312,6 +355,10 @@ def run(args):
             raise RuntimeError("固定初始 LowCmd 启动失败")
         lowcmd_started = True
         print("[GROUND STAND] WMP action 已接管；持续到 Select/Ctrl+C 或故障退出")
+        print(
+            f"[HEADING] 按 {HEADING_ENABLE_BUTTON} 开启：锁定当前 yaw、"
+            f"vx={HEADING_FORWARD_SPEED:.1f}m/s；按 {HEADING_DISABLE_BUTTON} 关闭并恢复摇杆"
+        )
 
         period = 1.0 / POLICY_RATE_HZ
         preview_period = 1.0 / DEPTH_DISPLAY_HZ
@@ -326,16 +373,41 @@ def run(args):
                 raise RuntimeError("DdsDriver 已进入紧急阻尼")
             state = driver.get_state()
             state_age_ms = require_fresh_state(state)
-            command_sample = command_source.read()
+            command_sample, remote = command_source.read_with_remote()
             if command_sample.quit_requested:
                 print("[COMMAND SOURCE] Select 请求退出")
                 break
+            heading_command = heading_controller.update(
+                current_yaw=state.imu_rpy[2],
+                manual_velocity=command_sample.velocity,
+                enable_pressed=remote.buttons[HEADING_ENABLE_BUTTON],
+                disable_pressed=remote.buttons[HEADING_DISABLE_BUTTON],
+            )
+            if heading_command.event == "enabled":
+                print(
+                    "[HEADING ON] "
+                    f"target_yaw={heading_command.target_yaw_rad:+.3f}rad "
+                    f"vx={heading_command.velocity[0]:.3f}m/s"
+                )
+            elif heading_command.event == "disabled":
+                print("[HEADING OFF] 已恢复原装遥控器 Ly/Rx 命令")
 
             preview_requested = display_enabled and time.monotonic() >= next_preview
             if preview_requested:
                 next_preview += preview_period
             parent_conn.send(
-                ("step", state_payload(state), command_sample.velocity, preview_requested)
+                (
+                    "step",
+                    state_payload(state),
+                    heading_command.velocity,
+                    preview_requested,
+                    args.observation_dir is not None,
+                    loop_count + 1,
+                    time.time_ns(),
+                    time.perf_counter_ns(),
+                    int(state.tick),
+                    state_age_ms,
+                )
             )
             response = receive_event(
                 parent_conn, "step", max(0.5, 3.0 * period), "WMP worker 响应"
@@ -346,6 +418,14 @@ def run(args):
                     f"{response['previous_depth_session']} -> {response['depth_session']} "
                     f"(frame={response['depth_frame']})"
                 )
+
+            response.update(
+                heading_mode=heading_command.enabled,
+                heading_event=heading_command.event,
+                heading_target_yaw_rad=heading_command.target_yaw_rad,
+                heading_current_yaw_rad=heading_command.current_yaw_rad,
+                heading_error_rad=heading_command.error_rad,
+            )
 
             loop_count += 1
             report_count += 1

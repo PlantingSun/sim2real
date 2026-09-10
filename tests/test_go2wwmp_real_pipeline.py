@@ -1,6 +1,7 @@
 """Offline safety/transport checks for the Go2WWMP real validation entry."""
 
 import ast
+import os
 from pathlib import Path
 import struct
 import unittest
@@ -10,6 +11,7 @@ import numpy as np
 
 from depth.receiver import DepthFrame, decode
 from config.go2w_config import CTRL, DDS_IDX_FROM_CTRL
+from depth.opencv_display import load_cv2_for_gui
 from driver.driver_base import MotorCommand, RobotState
 from driver.dds_driver import DdsDriver
 from policy.process_worker_go2wwmp import _depth_quality, _motor_arrays, _state_from_payload
@@ -18,6 +20,10 @@ from teleop.unitree_remote import UnitreeRemoteState, remote_to_command
 
 
 class TestGo2wWMPRealPipeline(unittest.TestCase):
+    def test_opencv_gui_uses_an_existing_font_directory(self):
+        load_cv2_for_gui()
+        self.assertTrue(Path(os.environ["QT_QPA_FONTDIR"]).is_dir())
+
     def test_unitree_long_run_entry_does_not_import_test_scripts(self):
         entry = Path(__file__).parents[1] / "scripts/real/run_go2wwmp_unitree.py"
         source = entry.read_text()
@@ -49,6 +55,13 @@ class TestGo2wWMPRealPipeline(unittest.TestCase):
             args = parse_args([])
         self.assertTrue(args.model.endswith("models/go2wwmp/model_6000.pt"))
         self.assertFalse(args.no_depth_display)
+        self.assertTrue(str(args.observation_dir).endswith("_obs"))
+        with patch(
+            "scripts.real.run_go2wwmp_unitree.os.sched_getaffinity",
+            return_value={0, 1},
+        ):
+            no_obs = parse_args(["--no-observation-log"])
+        self.assertIsNone(no_obs.observation_dir)
         self.assertFalse(hasattr(args, "duration"))
         self.assertFalse(hasattr(args, "ground_stand"))
         self.assertFalse(hasattr(args, "enable_wmp_action"))

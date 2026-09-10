@@ -1,5 +1,36 @@
 # 工作进度记录
 
+## 2026-09-09：Go2WWMP 航向保持功能
+
+- 已恢复现有规划和未提交改动，确认功能只需在正式 Unitree 入口的 50 Hz 命令侧接入，不修改
+  WMP/depth 数值时序或 LowCmd driver。
+- 已确定独立模块、A 开启/B 关闭、启用瞬间 yaw 目标、`vx=0.5 m/s` 和包角 P 控制方案；下一步
+  实现模块、遥控器接口、日志、离线测试及 guide，不运行实机控制。
+- 已新增 `teleop/heading_mode.py`，扩展遥控器读取接口并接入正式 runner；主 JSONL 增加五个航向
+  字段。Python 编译和 15 项定向离线测试通过。
+- 已新增 guide 23，并更新 guide 00/22/22.5 与 scripts 索引；下一步核对所有文档示例并运行完整
+  离线回归。
+- 已补充 README 索引和 27 字段 JSONL 校验示例。完整离线回归通过：30 项 unittest（2 项跳过）、
+  command input、runner `--help`、Python 编译和 diff 格式检查；Phase 38 完成，未运行实机入口。
+
+## 2026-09-09：建立下一轮实机优化基线（完成）
+
+- 已完整读取 planning-with-files 技能，并恢复现有根目录规划文件与 Git 变更概况。
+- 已盘点 50 个 Markdown 和 `guide/` 的 29 个文件，完成根 README、资源/模型/脚本/日志说明及
+  Orin onboarding 全部文档的逐篇阅读。
+- 正继续按“基础层 → 历史消融 → 当前深度/WMP 实机链路”顺序阅读全部 guide；本阶段只审阅和
+  建立共同理解，不运行任何真实机器人控制入口。
+- 已完成 guide 00–12（含 go2w/go2wcr 基础链路、历史分进程测试、WMP 仿真和 pipeline 复审）
+  的逐篇阅读，并记录了历史 Orin 文档与现行笔记本架构的版本边界。
+- 已完成 guide 13–22 的逐篇阅读，覆盖 Orin 延时/抖动消融、C++ DDS/ONNX 历史实验以及
+  当前 D435i 跨机、WMP 承重短测、Xbox/原装遥控器和正式运行入口。
+- 已确认仓库实际共有 50 个 Markdown（另有 4 个第三方 SDK 文档），并完成这 4 个第三方文件阅读；
+  继续补读较长的 `task_plan.md`、`findings.md`、`progress.md` 历史段落。
+- 已完整补读 `task_plan.md` 和 `findings.md`，提取出尚未闭环的 watchdog、时序/状态迁移日志、
+  耐久测试、拔插/重启和物理外参验证项，并识别 Next Step 与 guide 22 之间的状态漂移。
+- 已完整补读 `progress.md`；至此 50 个 Markdown 全部阅读完成。已将 Phase 35 标为完成，并按
+  guide 22 的现场事实校正规划中的 Next Step。本轮未运行测试、DDS、LowCmd 或 Sport Mode。
+
 ## 2026-08-27
 
 - 已读取 `planning-with-files` 技能规范。
@@ -555,3 +586,36 @@
   清理顺序先置阻尼、再等待 WMP 子进程和窗口关闭。未由助手运行实机控制。
 - 已通过 Python 3.8 编译、20 项离线单测（2 项按预期跳过）、遥控器映射脚本以及新旧入口的
   `--help` 检查；另有静态测试禁止正式入口导入 `test_policy`，并锁定同步/释放/LowCmd/阻尼顺序。
+
+## 2026-09-09：排查 OpenCV Qt 字体警告
+
+- 首次直接执行 planning-with-files 的 `resolve-plan-dir.sh` 因文件无执行权限失败；改为显式 `sh`
+  调用后完成恢复，未重复使用失败的调用方式。
+- 已确认警告来自 `opencv-python` wheel 设置了不存在的包内 Qt 字体目录，并确认系统 DejaVu 字体
+  完整；已在显示初始化前切换到现有系统字体目录，并将 VS Code 默认解释器设为 `unitree_py38`。
+- 正式 Unitree 入口、WMP 验收入口和深度回放已统一使用 `depth/opencv_display.py`；离线确认最终
+  `QT_QPA_FONTDIR=/usr/share/fonts/truetype/dejavu`。Python 3.8 编译、21 项单测（2 项跳过）、两个
+  CLI help 和 `git diff --check` 均通过；未打开 GUI 或运行实机控制。
+
+## 2026-09-09：新增 guide 22.5 自动日志说明
+
+- 新增 `guide/22.5_go2wwmp_log_format.md`，逐项定义正式入口 22 个 JSONL 字段、单位、数组
+  顺序、控制时序、文件生命周期、缺失数据和故障截断语义。
+- 补充纯 Python 的最新日志定位、流式完整性检查和 NumPy 短日志分析示例，并记录 JavaScript
+  大整数、实时 tail、格式兼容和磁盘容量注意事项。
+- `guide/00_overview.md` 与 `guide/22_go2wwmp_unitree_remote.md` 已加入索引和交叉链接。
+- 已用最近一次 1894 行真实自动日志验证 22 个必需字段、数组长度、连续 loop 和示例统计；
+  guide 内 Markdown 文件引用均存在，`git diff --check` 通过。未运行 DDS、LowCmd 或实机入口。
+
+## 2026-09-09：新增 Go2WWMP 观测/深度归档
+
+- 新增 `telemetry/observation_recorder.py`：默认按约 5 秒/250 帧写入未压缩 NPZ chunk，保存
+  timestamp、LowState 输入、command、prop、obs_now、obs_history、wm_feature 和实际深度更新帧；
+  不保存 action/MotorCommand。
+- `run_go2wwmp_unitree.py` 默认打开观测归档，可用 `--observation-dir` 指定目录，或用
+  `--no-observation-log` 关闭；主 JSONL 的既有诊断字段保持不变。
+- 控制器增加 `observation_snapshot()`，worker 只在请求的正式 action 周期记录，首帧只读自检不混入
+  实验数据；观测写盘在独立后台线程，chunk 采用临时文件+原子改名。
+- 新增 recorder 单元测试和 observation snapshot 回归，完整 tests discovery 共 23 项测试（2 项
+  按环境变量跳过）及 Python 编译检查均通过；未运行真实机器人控制。
+- `.gitignore` 已覆盖三类实验日志目录；旧日志已从 Git 索引移除但保留在本地，README 仍被跟踪。

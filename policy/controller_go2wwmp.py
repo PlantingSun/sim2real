@@ -86,6 +86,7 @@ class ControllerGo2wWMP:
         self.wm_feature = torch.zeros(self.WM_FEATURE_DIM)
         self.is_first = torch.ones(1, dtype=torch.float32)
         self.counter = 0
+        self._last_observation = None
         self.reset()
 
     @staticmethod
@@ -156,6 +157,21 @@ class ControllerGo2wWMP:
         self.wm_feature.zero_()
         self.is_first.fill_(1.0)
         self.counter = 0
+        self._last_observation = None
+
+    def observation_snapshot(self) -> dict:
+        """Return the actor/world-model inputs from the most recent step.
+
+        This is intentionally separate from ``step`` so the real-machine
+        logger can persist observations without adding action/MotorCommand
+        data to the observation archive.
+        """
+        if self._last_observation is None:
+            raise RuntimeError("尚未执行 WMP step，暂无 observation")
+        return {
+            key: value.detach().cpu().numpy().astype(np.float32, copy=True)
+            for key, value in self._last_observation.items()
+        }
 
     def _build_prop(self, state: RobotState, command: np.ndarray) -> torch.Tensor:
         """按 simtosim 顺序构造 37 维本体/命令输入。"""
@@ -281,6 +297,12 @@ class ControllerGo2wWMP:
         )
         self.last_action = action.clone()
         self.counter += 1
+        self._last_observation = {
+            "prop": prop.detach().clone(),
+            "obs_now": obs_now.detach().clone(),
+            "obs_history": obs_history.detach().clone(),
+            "wm_feature": self.wm_feature.detach().clone(),
+        }
         action_numpy = action.numpy()
         return action_numpy, self.action_to_motor_command(action_numpy)
 

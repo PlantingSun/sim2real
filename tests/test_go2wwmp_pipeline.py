@@ -98,6 +98,21 @@ class TestGo2wWMPPipeline(unittest.TestCase):
         )
         np.testing.assert_allclose(captured[0], [-0.2, 0.0, 1.0])
 
+    def test_observation_snapshot_matches_actor_inputs(self):
+        controller = minimal_controller()
+        controller.policy = SequencePolicy()
+        controller._update_world_model = types.MethodType(lambda *args: None, controller)
+        controller.step(
+            standing_state(), np.zeros(3, dtype=np.float32), np.ones((64, 64), dtype=np.float32)
+        )
+        snapshot = controller.observation_snapshot()
+        self.assertEqual(snapshot["prop"].shape, (37,))
+        self.assertEqual(snapshot["obs_now"].shape, (53,))
+        self.assertEqual(snapshot["obs_history"].shape, (250,))
+        self.assertEqual(snapshot["wm_feature"].shape, (512,))
+        for value in snapshot.values():
+            self.assertEqual(value.dtype, np.float32)
+
     def test_reset_uses_training_zero_history(self):
         controller = minimal_controller()
         controller.obs_history.fill_(7.0)

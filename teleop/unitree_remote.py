@@ -165,15 +165,19 @@ class UnitreeRemoteCommandSource:
         return False
 
     def read(self):
+        sample, _ = self.read_with_remote()
+        return sample
+
+    def read_with_remote(self):
+        """同时返回速度命令和按键状态，供正式入口的附加模式使用。"""
         remote, _, _ = self.snapshot()
         velocity = remote_to_command(
             remote, self._deadzone, self._minimum, self._maximum
         )
-        return CommandSample(
-            velocity=velocity,
-            quit_requested=remote.buttons[QUIT_BUTTON],
-            enabled=True,
+        sample = CommandSample(
+            velocity=velocity, quit_requested=remote.buttons[QUIT_BUTTON], enabled=True
         )
+        return sample, remote
 
     def close(self):
         # Unitree ChannelSubscriber 没有需要显式关闭的设备句柄。

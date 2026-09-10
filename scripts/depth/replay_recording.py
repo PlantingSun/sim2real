@@ -8,6 +8,8 @@ from pathlib import Path
 
 import numpy as np
 
+from depth.opencv_display import load_cv2_for_gui
+
 from depth.postprocess import preprocess_depth_for_wmp
 
 
@@ -71,7 +73,7 @@ def main() -> int:
         parser.error("speed 必须为正数，max-gap-ms 不能为负数")
 
     try:
-        import cv2
+        cv2 = load_cv2_for_gui()
     except ModuleNotFoundError as exc:
         print(f"[FAIL] replay requires OpenCV (cv2): {exc}")
         return 2

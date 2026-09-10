@@ -43,6 +43,10 @@ CRRL 对应入口：
 - `real/test_policy_go2wwmp_real.py`：Go2WWMP 分阶段验收入口
 - `real/run_go2wwmp_unitree.py`：已验收的 Unitree 手柄长期运行入口（默认无需参数）
 
+正式入口完成 L2+R2 接管后，A 单击开启航向保持，B 单击关闭；开启时固定
+`vx=0.5 m/s` 并根据启用瞬间的目标 yaw 自动计算 `vyaw`。现场步骤见
+[`../guide/23_go2wwmp_heading_mode.md`](../guide/23_go2wwmp_heading_mode.md)。
+
 例如，在项目根目录执行：
 
 ```bash

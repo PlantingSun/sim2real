@@ -50,6 +50,10 @@ go2wwmp 笔记本实机入口。所有会发送 LowCmd 或调用 Sport Mode 的�
 - [pending] Phase 32: 完成离线、仿真、录制回放、只读实机数据和时延回归
 - [pending] Phase 33: 由用户按吊架 → 地面低速的顺序分级执行实机验收
 - [pending] Phase 34: 由用户执行软障碍 → 目标障碍的递进跨越测试
+- [completed] Phase 35: 完整复核现有 Markdown/guide，建立后续实机优化的共同项目基线
+- [completed] Phase 36: 定义正式 Go2WWMP 自动 JSONL 日志格式、字段语义和后续对接约定
+- [completed] Phase 37: 增加默认观测/深度分块归档，并将实验日志从 Git 跟踪中移除
+- [completed] Phase 38: 为正式 Unitree 入口增加可显式开关的航向保持模式和现场指南
 
 ## Decisions
 
@@ -59,6 +63,10 @@ go2wwmp 笔记本实机入口。所有会发送 LowCmd 或调用 Sport Mode 的�
 - 先以当前仓库已有模型、配置和控制接口为事实依据；不能把“能导入”误判成“能上实机”。
 - 真实机器人测试入口默认必须显式确认/保护，验证阶段只做静态检查或仿真/离线运行。
 - 每个阶段的关键发现、变更和验证结果同步到 `findings.md` 与 `progress.md`。
+- 正式实机运行默认保存 timestamp、WMP 观测、LowState 观测和实际深度更新帧；观测归档不保存
+  action/MotorCommand，采用后台线程写入约 5 秒一个的未压缩 NPZ chunk；实验日志不进入 Git。
+- 航向保持只在正式入口完成 L2+R2 接管后响应新按键沿；A 开启并锁定当时 yaw，B 关闭并立即
+  恢复原装遥控器手动命令。开启时固定 `vx=0.5 m/s`、`vy=0`，`vyaw` 使用包角后的 yaw 误差计算。
 - Orin 不再运行 policy；它只发布 depth domain 42。笔记本保留 Unitree domain 0 控制链，
   WMP 子进程独立订阅深度，避免深度接收进入 500 Hz LowCmd 线程。
 - 当前 simulation 默认 checkpoint 候选为 `model_6000.pt`；在同工况比较并记录 SHA-256 前，
@@ -105,10 +113,10 @@ go2wwmp 笔记本实机入口。所有会发送 LowCmd 或调用 Sport Mode 的�
 
 ## Next Step
 
-用户已完成 guide 19 的四项深度接收验收，并完成 guide 20 的 print-only、固定站姿和 5 秒 action
-短测。当前 guide 21 的 Xbox 手柄接入、无限时长入口和 5 Hz 深度预览已经完成；下一步由用户先
-执行离线映射与 print-only，再在保护条件下运行长时间 action。尚未进入自由行走或障碍测试；
-Unitree 原生控制保持独立，不与 WMP LowCmd 同时运行。
+用户已完成 guide 19 的四项深度接收验收、guide 20 的 print-only/固定站姿/5 秒 action，
+并完成 Unitree 原装遥控器 30 秒 action 验收和正式长期入口。下一步先补齐 Phase 31–32 中尚缺的
+freshness watchdog、状态机/周期诊断日志与自动故障回归，再由用户在保护条件下执行长期 action、
+自由行走和递进障碍测试；Unitree 原生控制保持独立，不与 WMP LowCmd 同时运行。
 
 ## Phase 9 Scope（历史记录）
 
@@ -434,6 +442,8 @@ session_changed → dry-run reset 并记录，固定站姿 FAULT；depth_stale �
 - [x] 已加入只读录制与离线分析工具；真实序列已完成首轮分析，后续若改变处理规则需另做对照。
 - [x] 已在地面承重、保护架/急停覆盖下完成固定站姿、短时 action、手柄移动和台阶测试，并按每轮
       日志继续修正流程。
+- [x] 修正 `opencv-python` Qt wheel 指向缺失 `cv2/qt/fonts` 的预览警告；统一 GUI 入口在
+      `import cv2` 后、`namedWindow()` 前选择现有系统字体目录，并固定笔记本 VS Code Python 解释器。
 
 ## Phase 32 — 离线、仿真与完全只读端到端验证（pending）
 

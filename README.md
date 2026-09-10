@@ -8,6 +8,8 @@ Unitree Go2W 机器人 sim-to-real 控制系统。不使用 ROS/ROS2，主控制
 笔记本接入见 [接收接口文档](guide/19_depth_laptop_integration.md)，
 深度有效区域记录见 [guide 19.5](guide/19.5_depth_validation_record.md)；下一步真机验证见
 [guide 20](guide/20_go2wwmp_real_validation.md)。
+正式 Unitree 入口的 A/B 航向保持功能见
+[guide 23](guide/23_go2wwmp_heading_mode.md)。
 
 ## 架构
 

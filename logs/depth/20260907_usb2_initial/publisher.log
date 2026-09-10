@@ -1,8 +1,0 @@
-CONNECTED serial=336222074436 usb=2.1 profile=480x270@60 scale=0.001 intrinsics=241.087,241.087,240.835,138.657 distortion=Brown Conrady missing_fov_fraction=0.015625 spatial=1 temporal=0 hole_filling=-1 session=7664302014682290378
-STATS publish_hz=59.968 capture_hz=59.868 overwritten=0 processing_mean_ms=5.96793 processing_max_ms=8.73872 valid_ratio=0.908936 processing_p95_ms=7.2457 processing_p99_ms=7.66313
-STATS publish_hz=59.9087 capture_hz=59.9087 overwritten=0 processing_mean_ms=6.2028 processing_max_ms=9.6255 valid_ratio=0.902344 processing_p95_ms=7.19993 processing_p99_ms=7.4985
-STATS publish_hz=59.9097 capture_hz=59.9097 overwritten=0 processing_mean_ms=6.0717 processing_max_ms=10.4055 valid_ratio=0.909912 processing_p95_ms=7.14546 processing_p99_ms=8.32892
-STATS publish_hz=59.9051 capture_hz=59.9051 overwritten=0 processing_mean_ms=5.74714 processing_max_ms=8.50107 valid_ratio=0.908691 processing_p95_ms=6.84205 processing_p99_ms=7.12967
-STATS publish_hz=59.9046 capture_hz=59.9046 overwritten=0 processing_mean_ms=6.07742 processing_max_ms=17.0534 valid_ratio=0.911621 processing_p95_ms=7.05071 processing_p99_ms=7.47284
-STATS publish_hz=59.9102 capture_hz=59.9102 overwritten=0 processing_mean_ms=6.45821 processing_max_ms=9.20073 valid_ratio=0.914062 processing_p95_ms=7.39331 processing_p99_ms=7.86333
-FINAL published=3665

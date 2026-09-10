@@ -9,3 +9,10 @@
 
 *.pt
 *.onnx
+
+# 实验日志只保存在本机，不上传 Git；保留目录说明文件。
+logs/depth/*
+logs/real/*
+logs/policy/*
+!logs/depth/README.md
+!logs/real/README.md
